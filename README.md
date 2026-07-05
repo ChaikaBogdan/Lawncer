@@ -10,7 +10,7 @@ Tactical lawn care with suspiciously familiar mechanics.
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 24+ (LTS)
 - pnpm
 
 ### Installation
