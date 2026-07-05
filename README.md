@@ -12,9 +12,7 @@ Tactical lawn care with suspiciously familiar mechanics.
 
 <div align="center">
 
-## 🎮 [▶️ PLAY NOW ◀️](https://chaikabogdan.github.io/Lawncer/)
-
-_Launch into tactical lawn care chaos_
+## 🎮 [PLAY NOW](https://chaikabogdan.github.io/Lawncer/)
 
 </div>
 
