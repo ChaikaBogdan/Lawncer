@@ -4,6 +4,8 @@
 
 Tactical lawn care with suspiciously familiar mechanics.
 
+**[Play Now](https://chaibabogdan.github.io/Lawncer/)**
+
 ## Getting Started
 
 ### Prerequisites
