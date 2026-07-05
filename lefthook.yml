@@ -14,3 +14,6 @@ pre-commit:
     type-check:
       glob: 'src/**/*.ts'
       run: pnpm tsc --noEmit
+    test:
+      glob: 'src/**/*.{test,spec}.ts'
+      run: pnpm test --run
