@@ -1,4 +1,6 @@
-export default {
+import type { Options } from 'prettier'
+
+const config: Options = {
   semi: false,
   singleQuote: true,
   tabWidth: 2,
@@ -7,3 +9,5 @@ export default {
   printWidth: 100,
   arrowParens: 'always',
 }
+
+export default config
