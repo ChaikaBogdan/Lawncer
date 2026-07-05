@@ -9,12 +9,20 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitest/ui": "^4.1.9",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
     "gh-pages": "^6.3.0",
+    "prettier": "^3.9.4",
     "typescript": "~6.0.2",
+    "typescript-eslint": "^8.62.1",
     "vite": "^8.1.1",
     "vitest": "^4.1.9"
   },
