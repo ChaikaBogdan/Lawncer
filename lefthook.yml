@@ -4,7 +4,7 @@ pre-commit:
   parallel: true
   commands:
     lint:
-      glob: 'src/**/*.ts'
+      glob: '{src,tests}/**/*.ts'
       run: pnpm lint:fix
       stage_fixed: true
     format:
@@ -12,8 +12,8 @@ pre-commit:
       run: pnpm format
       stage_fixed: true
     type-check:
-      glob: 'src/**/*.ts'
-      run: pnpm tsc --noEmit
+      glob: '{src,tests}/**/*.ts'
+      run: pnpm tsc -p tsconfig.vitest.json --noEmit
     test:
       glob: 'src/**/*.{test,spec}.ts'
       run: pnpm test --run

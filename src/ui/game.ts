@@ -1,0 +1,586 @@
+import { chooseAiAction } from '../engine/ai/simpleAi.ts'
+import { resolve } from '../engine/combat/resolve.ts'
+import { TECH_RANGE } from '../engine/combat/tech.ts'
+import { reachableTiles } from '../engine/map/grid.ts'
+import {
+  attackableTargets,
+  techInvadeTargets,
+  techShieldTargets,
+} from '../engine/rules/targeting.ts'
+import { getGameOutcome } from '../engine/rules/outcome.ts'
+import { getActiveUnit } from '../engine/rules/turnOrder.ts'
+import { replay, type ActionLog } from '../engine/state/log.ts'
+import {
+  QUICK_ACTIONS_PER_ACTIVATION,
+  type GameState,
+  type Position,
+} from '../engine/state/types.ts'
+import { isAlive } from '../engine/state/unit.ts'
+import {
+  CELL_SIZE,
+  drawState,
+  preloadSprites,
+  type ActionArrowKind,
+} from '../renderer/canvasRenderer.ts'
+import { mountCombatLog } from './combatLog.ts'
+import { createLegend } from './legend.ts'
+import { renderRoster } from './roster.ts'
+import { mountTutorial } from './tutorial.ts'
+
+const AI_MOVE_DELAY_MS = 500
+const MOVE_DURATION_MS = 260
+const PROJECTILE_DURATION_MS = 320
+
+type PendingAction = 'attack' | 'invade' | 'shield' | null
+type HoveredAction = 'attack' | 'overwatch' | 'invade' | 'shield' | null
+
+interface Projectile {
+  from: Position
+  to: Position
+  kind: ActionArrowKind
+  startedAt: number
+}
+
+function makeButton(label: string, action: string): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.textContent = label
+  button.dataset.action = action
+  return button
+}
+
+export function mountGame(root: HTMLElement, initialState: GameState): void {
+  const initialSnapshot = structuredClone(initialState)
+  let state = initialState
+  let log: ActionLog = []
+  let pendingAction: PendingAction = null
+  let hoveredAction: HoveredAction = null
+  let animationLock = false
+  let hoveredTile: Position | null = null
+  let movingUnit: { id: string; pos: Position } | null = null
+  let projectiles: Projectile[] = []
+  let animLoopRunning = false
+  // Bumped on Reset so in-flight rAF callbacks scheduled before it (slideUnit/fireProjectile
+  // completions) recognize they're stale and skip committing against the just-reset state.
+  let generation = 0
+
+  const shell = document.createElement('div')
+  shell.className = 'game-shell'
+
+  const battlefieldColumn = document.createElement('div')
+  battlefieldColumn.className = 'battlefield-column'
+
+  const battlefieldStage = document.createElement('div')
+  battlefieldStage.className = 'battlefield-stage'
+
+  const canvas = document.createElement('canvas')
+  canvas.width = state.map.width * CELL_SIZE
+  canvas.height = state.map.height * CELL_SIZE
+  canvas.className = 'battle-grid'
+
+  const hitFlash = document.createElement('div')
+  hitFlash.className = 'hit-flash'
+
+  battlefieldStage.append(canvas, hitFlash)
+
+  const status = document.createElement('p')
+  status.className = 'battle-status'
+
+  const gameOverBanner = document.createElement('p')
+  gameOverBanner.className = 'game-over-banner'
+
+  const controls = document.createElement('div')
+  controls.className = 'controls'
+
+  const attackButton = makeButton('⚔️ Attack', 'attack')
+  const overwatchButton = makeButton('👁️ Overwatch', 'overwatch')
+  const invadeButton = makeButton('🛰️ Invade', 'invade')
+  const shieldButton = makeButton('🛡️ Shield', 'shield')
+  const endActivationButton = makeButton('⏭️ End activation', 'end-activation')
+
+  const divider = document.createElement('div')
+  divider.className = 'divider'
+
+  const resetButton = makeButton('🔄 Reset scenario', 'reset')
+  const tutorialButton = makeButton('🎓 Tutorial', 'tutorial')
+
+  controls.append(
+    attackButton,
+    overwatchButton,
+    invadeButton,
+    shieldButton,
+    endActivationButton,
+    divider,
+    resetButton,
+    tutorialButton
+  )
+
+  battlefieldColumn.append(battlefieldStage, status, gameOverBanner, createLegend(), controls)
+
+  const roster = document.createElement('aside')
+  roster.className = 'roster'
+
+  shell.append(battlefieldColumn, roster)
+
+  root.append(shell)
+  const combatLog = mountCombatLog(root)
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('2D canvas context unavailable')
+
+  const tutorial = mountTutorial(root)
+
+  // Hovering a targeted-action button previews its range (and, for attack/invade/shield, arrows to valid targets).
+  const withHoverPreview = (button: HTMLButtonElement, action: Exclude<HoveredAction, null>) => {
+    button.addEventListener('mouseenter', () => {
+      hoveredAction = action
+      render()
+    })
+    button.addEventListener('mouseleave', () => {
+      hoveredAction = null
+      render()
+    })
+  }
+
+  function actionRange(
+    action: Exclude<HoveredAction, null>,
+    activeUnit: NonNullable<ReturnType<typeof getActiveUnit>>
+  ): number {
+    return action === 'invade' || action === 'shield' ? TECH_RANGE : activeUnit.weapon.range
+  }
+
+  const render = () => {
+    const outcome = getGameOutcome(state)
+    const activeUnit = outcome === 'ongoing' ? getActiveUnit(state) : undefined
+    if (!activeUnit || activeUnit.team !== 'player') pendingAction = null
+
+    if (outcome !== 'ongoing') {
+      gameOverBanner.textContent =
+        outcome === 'playerWins'
+          ? '🎉 Victory — all enemies destroyed!'
+          : '💀 Defeat — your mech team was wiped out.'
+      gameOverBanner.dataset.outcome = outcome
+    } else {
+      gameOverBanner.textContent = ''
+      delete gameOverBanner.dataset.outcome
+    }
+
+    // While something is mid-animation, hide decision overlays — nothing to decide until it settles.
+    const isAnimating = !!movingUnit || projectiles.length > 0
+
+    const reachable =
+      activeUnit && !isAnimating
+        ? reachableTiles(
+            state.map,
+            state.units,
+            activeUnit.pos,
+            activeUnit.moveSpeed,
+            activeUnit.id
+          )
+        : []
+    const attackable = activeUnit && !isAnimating ? attackableTargets(state, activeUnit) : []
+    const techTargets =
+      !activeUnit || isAnimating
+        ? []
+        : pendingAction === 'invade'
+          ? techInvadeTargets(state, activeUnit)
+          : pendingAction === 'shield'
+            ? techShieldTargets(state, activeUnit)
+            : []
+
+    // Hovering any unit other than the one currently deciding shows its threat/support range
+    // (move cells + weapon/tech reach) instead of our own move-preview dots — more useful than
+    // previewing our own already-visible move/attack tiles.
+    const hoveredUnit = hoveredTile
+      ? state.units.find(
+          (u) => isAlive(u) && u.pos.x === hoveredTile!.x && u.pos.y === hoveredTile!.y
+        )
+      : undefined
+    const inspectedUnit = hoveredUnit && hoveredUnit.id !== activeUnit?.id ? hoveredUnit : undefined
+
+    const inspectedReachable =
+      inspectedUnit && !isAnimating
+        ? reachableTiles(
+            state.map,
+            state.units,
+            inspectedUnit.pos,
+            inspectedUnit.moveSpeed,
+            inspectedUnit.id
+          )
+        : []
+
+    const movePreview = inspectedUnit
+      ? {
+          attack: inspectedReachable.filter(
+            (pos) => attackableTargets(state, { ...inspectedUnit, pos }).length > 0
+          ),
+          tech: inspectedReachable.filter((pos) => {
+            const hypothetical = { ...inspectedUnit, pos }
+            return (
+              techInvadeTargets(state, hypothetical).length > 0 ||
+              techShieldTargets(state, hypothetical).some((ally) => ally.id !== inspectedUnit.id)
+            )
+          }),
+        }
+      : { attack: [], tech: [] }
+
+    const previewAction: HoveredAction = hoveredAction ?? pendingAction
+    // Only the target tile actually under the cursor gets an arrow — showing every valid target
+    // at once forked into an unreadable spray of arrows.
+    const hoveredTarget =
+      activeUnit && !isAnimating && hoveredTile && previewAction
+        ? (previewAction === 'attack'
+            ? attackableTargets(state, activeUnit)
+            : previewAction === 'invade'
+              ? techInvadeTargets(state, activeUnit)
+              : previewAction === 'shield'
+                ? techShieldTargets(state, activeUnit).filter((ally) => ally.id !== activeUnit.id)
+                : []
+          ).find((target) => target.pos.x === hoveredTile!.x && target.pos.y === hoveredTile!.y)
+        : undefined
+
+    const actionArrows =
+      activeUnit && hoveredTarget && previewAction
+        ? [
+            {
+              from: activeUnit.pos,
+              to: hoveredTarget.pos,
+              kind: previewAction as 'attack' | 'invade' | 'shield',
+            },
+          ]
+        : []
+
+    const now = performance.now()
+
+    drawState(ctx, state, {
+      activeUnitId: activeUnit?.id,
+      reachable,
+      attackable: attackable.map((u) => u.pos),
+      techTargets: techTargets.map((u) => u.pos),
+      weaponRangeDiamond:
+        activeUnit && !isAnimating
+          ? { pos: activeUnit.pos, range: actionRange(previewAction ?? 'attack', activeUnit) }
+          : undefined,
+      inspectedRangeDiamond: inspectedUnit
+        ? { pos: inspectedUnit.pos, range: inspectedUnit.weapon.range }
+        : undefined,
+      inspectedReachable,
+      movePreview,
+      actionArrows,
+      movingUnit: movingUnit ?? undefined,
+      projectiles: projectiles.map((p) => ({
+        from: p.from,
+        to: p.to,
+        kind: p.kind,
+        progress: Math.min(1, (now - p.startedAt) / PROJECTILE_DURATION_MS),
+      })),
+    })
+
+    renderRoster(roster, state, activeUnit?.id)
+
+    const isPlayerTurn = !!activeUnit && activeUnit.team === 'player' && !isAnimating
+    attackButton.disabled = !isPlayerTurn
+    overwatchButton.disabled = !isPlayerTurn || !!activeUnit?.overwatch
+    invadeButton.disabled = !isPlayerTurn
+    shieldButton.disabled = !isPlayerTurn
+    endActivationButton.disabled = !isPlayerTurn
+    attackButton.classList.toggle('armed', pendingAction === 'attack')
+    invadeButton.classList.toggle('armed', pendingAction === 'invade')
+    shieldButton.classList.toggle('armed', pendingAction === 'shield')
+
+    attackButton.title = activeUnit ? `Range: ${activeUnit.weapon.range}` : ''
+    overwatchButton.title = !activeUnit
+      ? ''
+      : activeUnit.overwatch
+        ? 'Already watching this activation'
+        : `Watches Range: ${activeUnit.weapon.range}`
+    invadeButton.title = `Range: ${TECH_RANGE}`
+    shieldButton.title = `Range: ${TECH_RANGE}`
+
+    tutorial.notify(state, log)
+
+    if (outcome !== 'ongoing') {
+      status.textContent = `Round ${state.round} — game over`
+      return
+    }
+
+    if (!activeUnit) {
+      status.textContent = `Round ${state.round} — no units left to activate`
+      return
+    }
+
+    const remaining = QUICK_ACTIONS_PER_ACTIVATION - activeUnit.quickActionsUsed
+    status.textContent = `Round ${state.round} — ${activeUnit.team.toUpperCase()} activating ${activeUnit.name} (${remaining} quick action${remaining === 1 ? '' : 's'} left)`
+  }
+
+  withHoverPreview(attackButton, 'attack')
+  withHoverPreview(overwatchButton, 'overwatch')
+  withHoverPreview(invadeButton, 'invade')
+  withHoverPreview(shieldButton, 'shield')
+
+  // Drives both the sliding-move animation and in-flight projectiles off a single rAF loop.
+  function ensureAnimLoop() {
+    if (animLoopRunning) return
+    animLoopRunning = true
+    const tick = () => {
+      const now = performance.now()
+      const landed = projectiles.filter((p) => now - p.startedAt >= PROJECTILE_DURATION_MS)
+      if (landed.length > 0) {
+        projectiles = projectiles.filter((p) => now - p.startedAt < PROJECTILE_DURATION_MS)
+        for (const p of landed) onProjectileLanded(p)
+      }
+      render()
+      if (movingUnit || projectiles.length > 0) {
+        requestAnimationFrame(tick)
+      } else {
+        animLoopRunning = false
+      }
+    }
+    requestAnimationFrame(tick)
+  }
+
+  const projectileCallbacks = new Map<Projectile, () => void>()
+  function onProjectileLanded(projectile: Projectile) {
+    projectileCallbacks.get(projectile)?.()
+    projectileCallbacks.delete(projectile)
+  }
+
+  function fireProjectile(
+    from: Position,
+    to: Position,
+    kind: ActionArrowKind,
+    onLanded: () => void
+  ) {
+    const projectile: Projectile = { from, to, kind, startedAt: performance.now() }
+    projectiles = [...projectiles, projectile]
+    projectileCallbacks.set(projectile, onLanded)
+    ensureAnimLoop()
+  }
+
+  function slideUnit(unitId: string, from: Position, to: Position, onArrived: () => void) {
+    const startedAt = performance.now()
+    movingUnit = { id: unitId, pos: from }
+    const step = () => {
+      const t = Math.min(1, (performance.now() - startedAt) / MOVE_DURATION_MS)
+      movingUnit = {
+        id: unitId,
+        pos: { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t },
+      }
+      render()
+      if (t < 1) {
+        requestAnimationFrame(step)
+      } else {
+        movingUnit = null
+        onArrived()
+      }
+    }
+    requestAnimationFrame(step)
+  }
+
+  const FLASH_COLOR: Record<'weapon' | 'tech' | 'shield', string> = {
+    weapon: 'var(--status-critical)',
+    tech: 'var(--tech-accent)',
+    shield: 'var(--status-good)',
+  }
+
+  // Restarting a CSS animation requires forcing a reflow between removing and re-adding the class.
+  const triggerImpact = (variant: 'weapon' | 'tech' | 'shield') => {
+    hitFlash.style.background = FLASH_COLOR[variant]
+    hitFlash.classList.remove('flash')
+    void hitFlash.offsetWidth
+    hitFlash.classList.add('flash')
+
+    if (variant === 'weapon') {
+      canvas.classList.remove('shake')
+      void canvas.offsetWidth
+      canvas.classList.add('shake')
+    }
+  }
+
+  const applyAction = (action: Parameters<typeof resolve>[1]) => {
+    if (animationLock) return
+    const before = state
+    const startGen = generation
+
+    let after: GameState
+    try {
+      after = resolve(before, action)
+    } catch {
+      // Invalid click target (unreachable tile / out-of-range attack) — ignore, keep current activation.
+      return
+    }
+
+    const commit = () => {
+      state = after
+      log = [...log, { action }]
+      combatLog.record(before, action, state)
+      render()
+      scheduleAiTurnIfNeeded()
+    }
+
+    if (action.type === 'attack' || action.type === 'techInvade') {
+      const attacker = before.units.find((u) => u.id === action.unitId)!
+      const target = before.units.find((u) => u.id === action.targetId)!
+      const kind = action.type === 'attack' ? 'attack' : 'invade'
+      animationLock = true
+      fireProjectile(attacker.pos, target.pos, kind, () => {
+        if (startGen !== generation) return
+        commit()
+        if (action.type === 'attack' && state.lastAttack?.hit) triggerImpact('weapon')
+        if (action.type === 'techInvade') triggerImpact('tech')
+        animationLock = false
+      })
+      return
+    }
+
+    if (action.type === 'move') {
+      const mover = before.units.find((u) => u.id === action.unitId)!
+      animationLock = true
+      slideUnit(mover.id, mover.pos, action.to, () => {
+        if (startGen !== generation) return
+        commit()
+        // A move can trigger an Overwatch reaction mid-flight — show it as a quick follow-up shot.
+        if (before.lastAttack !== state.lastAttack && state.lastAttack) {
+          const watcher = state.units.find((u) => u.id === state.lastAttack!.attackerId)
+          const movedUnit = state.units.find((u) => u.id === action.unitId)
+          if (watcher && movedUnit) {
+            fireProjectile(watcher.pos, movedUnit.pos, 'attack', () => {
+              if (startGen !== generation) return
+              if (state.lastAttack?.hit) triggerImpact('weapon')
+              animationLock = false
+            })
+            return
+          }
+        }
+        animationLock = false
+      })
+      return
+    }
+
+    commit()
+    if (action.type === 'techShield') triggerImpact('shield')
+  }
+
+  function scheduleAiTurnIfNeeded() {
+    if (getGameOutcome(state) !== 'ongoing') return
+    const activeUnit = getActiveUnit(state)
+    if (activeUnit?.team !== 'enemy') return
+    setTimeout(() => applyAction(chooseAiAction(state, activeUnit)), AI_MOVE_DELAY_MS)
+  }
+
+  canvas.addEventListener('mousemove', (event) => {
+    const rect = canvas.getBoundingClientRect()
+    const tile: Position = {
+      x: Math.floor(((event.clientX - rect.left) / rect.width) * state.map.width),
+      y: Math.floor(((event.clientY - rect.top) / rect.height) * state.map.height),
+    }
+    if (hoveredTile && hoveredTile.x === tile.x && hoveredTile.y === tile.y) return
+    hoveredTile = tile
+    render()
+  })
+
+  canvas.addEventListener('mouseleave', () => {
+    if (!hoveredTile) return
+    hoveredTile = null
+    render()
+  })
+
+  canvas.addEventListener('click', (event) => {
+    if (getGameOutcome(state) !== 'ongoing') return
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+
+    const rect = canvas.getBoundingClientRect()
+    const clicked: Position = {
+      x: Math.floor(((event.clientX - rect.left) / rect.width) * state.map.width),
+      y: Math.floor(((event.clientY - rect.top) / rect.height) * state.map.height),
+    }
+
+    const clickedUnit = state.units.find(
+      (u) => isAlive(u) && u.pos.x === clicked.x && u.pos.y === clicked.y
+    )
+
+    if (pendingAction === 'attack') {
+      if (clickedUnit && clickedUnit.team !== activeUnit.team) {
+        pendingAction = null
+        applyAction({ type: 'attack', unitId: activeUnit.id, targetId: clickedUnit.id })
+      }
+      return
+    }
+
+    if (pendingAction === 'invade') {
+      if (clickedUnit && clickedUnit.team !== activeUnit.team) {
+        pendingAction = null
+        applyAction({ type: 'techInvade', unitId: activeUnit.id, targetId: clickedUnit.id })
+      }
+      return
+    }
+
+    if (pendingAction === 'shield') {
+      if (clickedUnit && clickedUnit.team === activeUnit.team) {
+        pendingAction = null
+        applyAction({ type: 'techShield', unitId: activeUnit.id, targetId: clickedUnit.id })
+      }
+      return
+    }
+
+    if (!clickedUnit) {
+      applyAction({ type: 'move', unitId: activeUnit.id, to: clicked })
+    }
+  })
+
+  endActivationButton.addEventListener('click', () => {
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+    applyAction({ type: 'endActivation', unitId: activeUnit.id })
+  })
+
+  overwatchButton.addEventListener('click', () => {
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+    applyAction({ type: 'overwatch', unitId: activeUnit.id })
+  })
+
+  attackButton.addEventListener('click', () => {
+    pendingAction = pendingAction === 'attack' ? null : 'attack'
+    render()
+  })
+
+  invadeButton.addEventListener('click', () => {
+    pendingAction = pendingAction === 'invade' ? null : 'invade'
+    render()
+  })
+
+  shieldButton.addEventListener('click', () => {
+    pendingAction = pendingAction === 'shield' ? null : 'shield'
+    render()
+  })
+
+  resetButton.addEventListener('click', () => {
+    generation += 1
+    state = structuredClone(initialSnapshot)
+    log = []
+    pendingAction = null
+    movingUnit = null
+    projectiles = []
+    animationLock = false
+    combatLog.clear()
+    render()
+    scheduleAiTurnIfNeeded()
+  })
+
+  tutorialButton.addEventListener('click', () => tutorial.restart())
+
+  render()
+  void preloadSprites().then(render)
+  scheduleAiTurnIfNeeded()
+
+  Object.assign(window, {
+    __LAWNCER__: {
+      getState: () => state,
+      getLog: () => log,
+      replay: () => replay(structuredClone(initialSnapshot), log),
+      isAnimating: () => animationLock,
+    },
+  })
+}

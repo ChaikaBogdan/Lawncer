@@ -4,7 +4,8 @@ import prettierConfig from 'eslint-config-prettier'
 
 export default [
   {
-    ignores: ['dist', 'node_modules', '.github'],
+    // scripts/ holds throwaway manual-verification drivers rewritten per task — not held to product code lint rules.
+    ignores: ['dist', 'node_modules', '.github', 'scripts'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
