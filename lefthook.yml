@@ -1,0 +1,16 @@
+version: 2
+
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: 'src/**/*.ts'
+      run: pnpm lint:fix
+      stage_fixed: true
+    format:
+      glob: '**/*.{ts,json,md,yml,yaml}'
+      run: pnpm format
+      stage_fixed: true
+    type-check:
+      glob: 'src/**/*.ts'
+      run: pnpm tsc --noEmit
