@@ -43,6 +43,10 @@ Preview the production build:
 pnpm preview
 ```
 
+## Deployment
+
+This project automatically deploys to GitHub Pages when you push to the `main` branch using GitHub Actions.
+
 ## Tech Stack
 
 - **Vite** - Fast build tool
