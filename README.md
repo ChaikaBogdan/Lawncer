@@ -8,7 +8,17 @@ Tactical lawn care with suspiciously familiar mechanics.
 [![Tests](https://github.com/ChaikaBogdan/Lawncer/actions/workflows/test.yml/badge.svg)](https://github.com/ChaikaBogdan/Lawncer/actions/workflows/test.yml)
 [![Deploy](https://github.com/ChaikaBogdan/Lawncer/actions/workflows/deploy.yml/badge.svg)](https://github.com/ChaikaBogdan/Lawncer/actions/workflows/deploy.yml)
 
-**[Play Now](https://chaikabogdan.github.io/Lawncer/)**
+---
+
+<div align="center">
+
+## 🎮 [▶️ PLAY NOW ◀️](https://chaikabogdan.github.io/Lawncer/)
+
+_Launch into tactical lawn care chaos_
+
+</div>
+
+---
 
 ## Getting Started
 
