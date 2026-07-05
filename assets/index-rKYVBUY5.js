@@ -50,3 +50,4 @@
 <div class="ticks"></div>
 <section id="spacer"></section>
 `,r(document.querySelector(`#counter`));
+//# sourceMappingURL=index-rKYVBUY5.js.map
