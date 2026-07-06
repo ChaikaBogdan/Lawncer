@@ -19,7 +19,7 @@ describe('describeAction', () => {
     }
     expect(
       describeAction(before, { type: 'attack', unitId: 'player-1', targetId: 'enemy-1' }, after)
-    ).toBe('Everest attacks Sentinel — rolled 14 vs Evasion 8 — HIT for 1 dmg')
+    ).toBe('⚔️ Everest attacks Sentinel — rolled 14 vs Evasion 8 — HIT for 1 dmg')
   })
 
   it('describes a miss without a damage suffix', () => {
@@ -38,7 +38,7 @@ describe('describeAction', () => {
     }
     expect(
       describeAction(before, { type: 'attack', unitId: 'player-1', targetId: 'enemy-1' }, after)
-    ).toBe('Everest attacks Sentinel — rolled 3 vs Evasion 8 — MISS')
+    ).toBe('⚔️ Everest attacks Sentinel — rolled 3 vs Evasion 8 — MISS')
   })
 
   it('appends a destroyed suffix when the action kills a unit', () => {
@@ -59,7 +59,7 @@ describe('describeAction', () => {
     expect(
       describeAction(before, { type: 'attack', unitId: 'player-1', targetId: 'enemy-1' }, after)
     ).toBe(
-      'Everest attacks Sentinel — rolled 20 vs Evasion 8 — CRITICAL HIT for 6 dmg 💀 Sentinel destroyed'
+      '⚔️ Everest attacks Sentinel — rolled 20 vs Evasion 8 — CRITICAL HIT for 6 dmg 💀 Sentinel destroyed'
     )
   })
 
@@ -68,6 +68,6 @@ describe('describeAction', () => {
     const after = { ...before }
     expect(
       describeAction(before, { type: 'move', unitId: 'player-1', to: { x: 1, y: 3 } }, after)
-    ).toBe('Everest moves to (1, 3)')
+    ).toBe('🏃 Everest moves to (1, 3)')
   })
 })

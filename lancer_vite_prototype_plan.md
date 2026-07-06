@@ -42,8 +42,7 @@ GameState -> Actions -> resolve() -> New GameState -> Render
 7. Status effects
 8. Heat + structure system
 9. Simple AI
-10. Debug tools
-11. Extensions (tech, overwatch, multiplayer prep)
+10. Extensions (tech, overwatch)
 
 ## Principles
 
@@ -255,3 +254,49 @@ If any of these are missing:
 - alternating activation
 
 → the system will become "generic mech tactics" and lose LANCER identity.
+
+---
+
+# 📋 Plan — 2026-07-06: Close PC-combat rule gaps vs real LANCER
+
+Compared current engine (`src/engine/`) against real LANCER core rules ([lancer-rules.carrd.co](https://lancer-rules.carrd.co/), [combat cheatsheet](https://hackmd.io/@hohouyj/SJ2vwUDWt)), scoped to small PC-adoptable combat only (no licensing/mission/downtime).
+
+## Current state summary
+
+- Action economy is a flat 2-quick-action pool; no Full Action tier, no Overcharge.
+- Turn structure (alternating single-unit activation) already matches real LANCER. ✅
+- No cover concept at all (`src/engine/map/lineOfSight.ts` is binary blocked/not-blocked).
+- Structure loss (`src/engine/combat/damage.ts`) and stress/heat overflow (`src/engine/combat/heat.ts`) each have one fixed deterministic outcome (Stunned / Impaired), not real LANCER's escalating random tables.
+- Only 3 statuses exist (`stunned`, `impaired`, `shielded`) vs real LANCER's 13+; missing **Engaged** and **Exposed** in particular.
+- Only 1 reaction (Overwatch); missing **Brace**.
+
+## Priority order for today
+
+1. **Cover (soft/hard)** — biggest missing mechanic; undermines design doc's own rule #5 (positioning > DPS). Add cover level lookup between attacker/defender line, apply to-hit modifier for ranged attacks only (melee ignores cover per real rules).
+2. **Overcharge** — free extra quick action paid in heat, escalating cost (1 → 1d3 → 1d6 → 1d6+4), resets each activation. Explicitly named in this doc's own "Core Identity" section as required.
+3. **Engaged status** — moving adjacent to a hostile marks both Engaged; ranged attacks while Engaged take an accuracy penalty. Creates real melee threat/commit-or-disengage tension.
+4. **Brace reaction** — halve incoming damage/heat on a triggered attack, costs your next turn's action budget (only 1 quick action, no reactions until next round). Pairs naturally with Exposed/stress work.
+
+Lower priority (do only if time remains): convert structure/stress fixed outcomes into real escalating d6-per-missing-box tables with System Trauma (destroy random weapon/system) and Exposed-on-destabilized-power-plant.
+
+## Out of scope today
+
+Full tech/system suite (drones, deployables, hacking beyond Invade), non-Overwatch/Brace reactions — reasonable to defer per the design doc's own milestone ordering.
+
+---
+
+# 📋 Next up: Weapon Tags/Mounts + Mech Frames (generic, non-IP)
+
+Both scoped as **generic mechanics with original names/stats** — no LANCER frame/weapon proper nouns, just the underlying gameplay systems, consistent with how `RIFLE`/`SHOTGUN`/`SWORD` are already original names for existing mechanics.
+
+## Weapon tags & mounts
+
+- **Tags** (modifiers on a `Weapon`): Accurate/Inaccurate (to-hit bonus/penalty, stacking with our existing flat evasion-modifier system rather than real LANCER's accuracy dice pool), AP (ignores cover's to-hit bonus, since we have no armor/resistance system to "ignore" otherwise), Knockback (pushes the target back N tiles post-hit, clamped to map bounds/blocked by walls/units).
+- **Mounts**: gives a unit more than one weapon slot (Main + Aux, or a single Heavy). Unlocks a genuine **Barrage** full action (attack with multiple mounts at once) — currently impossible since every unit has exactly one weapon.
+- Needs: `Weapon.tags`, `UnitState.mounts: Weapon[]` (or similar) replacing the single `weapon` field, targeting/AI updates for multi-weapon choice, and a real Full Action (Barrage) to spend the whole turn firing every mount.
+
+## Mech frames
+
+- A small roster of **generic frame archetypes** (e.g. a tanky brawler, a glass-cannon sniper, a mobile skirmisher) — each a named stat/trait bundle (HP/structure/heat-cap/evasion/moveSpeed profile + starting mounts), not just ad-hoc `mech()` calls in `demo.ts`.
+- Gives the roster real identity (design doc's Core Identity Rule #7) instead of interchangeable stat bags, and is the natural home for weapon-tag/mount variety above.
+- Needs: a `Frame` type + a small catalog (3-4 frames), `demo.ts` building units from frames instead of inline stats.

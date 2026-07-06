@@ -36,7 +36,7 @@ describe('chooseAiAction', () => {
       firstTeamThisRound: 'enemy',
       rngSeed: 'test-seed',
       rngCalls: 0,
-      map: { width: 5, height: 1, walls: [] },
+      map: { width: 5, height: 1, walls: [], cover: [] },
       units: [
         { ...createDemoScenario().units[0], id: 'p1', pos: { x: 0, y: 0 }, moveSpeed: 0 },
         {

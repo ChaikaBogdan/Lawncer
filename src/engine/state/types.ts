@@ -12,7 +12,8 @@ export interface Weapon {
   heat: number
 }
 
-export type StatusType = 'stunned' | 'impaired' | 'shielded'
+export type StatusType =
+  'stunned' | 'impaired' | 'shielded' | 'braced' | 'rattled' | 'exposed' | 'lockedOn'
 
 export interface StatusEffect {
   type: StatusType
@@ -48,12 +49,20 @@ export interface UnitState {
   statuses: StatusEffect[]
   /** Armed via the Overwatch action; triggers a free reaction attack on an enemy moving into range/LOS. */
   overwatch: boolean
+  /** Armed via the Brace action; halves the next incoming attack's damage/heat, then triggers Braced. */
+  brace: boolean
+  /** Times Overcharge has been used this activation; escalates its heat cost (see overcharge.ts) and grants +1 quick action each use. */
+  overchargeCount: number
+  /** Set by a System Trauma structure-table result; blocks attacking until Stabilize clears it. */
+  weaponDisabled: boolean
 }
 
 export interface MapState {
   width: number
   height: number
   walls: Position[]
+  /** Soft cover terrain: doesn't block LOS or movement, grants a smaller to-hit penalty than a wall (hard cover) when adjacent to the defender. */
+  cover: Position[]
 }
 
 export interface AttackResult {

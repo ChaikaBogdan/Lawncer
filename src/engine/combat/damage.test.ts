@@ -24,6 +24,9 @@ function baseUnit(overrides: Partial<UnitState> = {}): UnitState {
     evasion: 8,
     statuses: [],
     overwatch: false,
+    brace: false,
+    overchargeCount: 0,
+    weaponDisabled: false,
     ...overrides,
   }
 }
@@ -53,18 +56,8 @@ describe('applyDamage', () => {
     expect(result.hp).toBe(4)
   })
 
-  it('leaves a surviving unit Stunned after a structure box is consumed', () => {
+  it("does not touch statuses — narrative outcomes are the structure table orchestration's job", () => {
     const result = applyDamage(baseUnit({ hp: 1 }), 2)
-    expect(result.statuses).toEqual([{ type: 'stunned', roundsRemaining: 2 }])
-  })
-
-  it('does not apply Stunned when the hit only depletes HP without consuming structure', () => {
-    const result = applyDamage(baseUnit({ hp: 4 }), 1)
-    expect(result.statuses).toEqual([])
-  })
-
-  it('does not apply Stunned to a unit destroyed outright', () => {
-    const result = applyDamage(baseUnit({ hp: 1, structure: 1 }), 1)
     expect(result.statuses).toEqual([])
   })
 })

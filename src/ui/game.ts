@@ -15,7 +15,7 @@ import {
   type GameState,
   type Position,
 } from '../engine/state/types.ts'
-import { isAlive } from '../engine/state/unit.ts'
+import { hasStatus, isAlive } from '../engine/state/unit.ts'
 import {
   CELL_SIZE,
   drawState,
@@ -23,6 +23,7 @@ import {
   type ActionArrowKind,
 } from '../renderer/canvasRenderer.ts'
 import { mountCombatLog } from './combatLog.ts'
+import { mountContextualHints } from './contextualHints.ts'
 import { createLegend } from './legend.ts'
 import { renderRoster } from './roster.ts'
 import { mountTutorial } from './tutorial.ts'
@@ -31,8 +32,8 @@ const AI_MOVE_DELAY_MS = 500
 const MOVE_DURATION_MS = 260
 const PROJECTILE_DURATION_MS = 320
 
-type PendingAction = 'attack' | 'invade' | 'shield' | null
-type HoveredAction = 'attack' | 'overwatch' | 'invade' | 'shield' | null
+type PendingAction = 'attack' | 'invade' | 'shield' | 'lockOn' | null
+type HoveredAction = 'attack' | 'overwatch' | 'invade' | 'shield' | 'lockOn' | null
 
 interface Projectile {
   from: Position
@@ -94,6 +95,10 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
 
   const attackButton = makeButton('⚔️ Attack', 'attack')
   const overwatchButton = makeButton('👁️ Overwatch', 'overwatch')
+  const overchargeButton = makeButton('🔥 Overcharge', 'overcharge')
+  const braceButton = makeButton('🛑 Brace', 'brace')
+  const stabilizeButton = makeButton('🔧 Stabilize', 'stabilize')
+  const lockOnButton = makeButton('🎯 Lock On', 'lockOn')
   const invadeButton = makeButton('🛰️ Invade', 'invade')
   const shieldButton = makeButton('🛡️ Shield', 'shield')
   const endActivationButton = makeButton('⏭️ End activation', 'end-activation')
@@ -107,6 +112,10 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
   controls.append(
     attackButton,
     overwatchButton,
+    overchargeButton,
+    braceButton,
+    stabilizeButton,
+    lockOnButton,
     invadeButton,
     shieldButton,
     endActivationButton,
@@ -124,11 +133,12 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
 
   root.append(shell)
   const combatLog = mountCombatLog(root)
+  const contextualHints = mountContextualHints(root)
 
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('2D canvas context unavailable')
 
-  const tutorial = mountTutorial(root)
+  const tutorial = mountTutorial(root, (visible) => contextualHints.setPaused(visible))
 
   // Hovering a targeted-action button previews its range (and, for attack/invade/shield, arrows to valid targets).
   const withHoverPreview = (button: HTMLButtonElement, action: Exclude<HoveredAction, null>) => {
@@ -146,7 +156,9 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     action: Exclude<HoveredAction, null>,
     activeUnit: NonNullable<ReturnType<typeof getActiveUnit>>
   ): number {
-    return action === 'invade' || action === 'shield' ? TECH_RANGE : activeUnit.weapon.range
+    return action === 'invade' || action === 'shield' || action === 'lockOn'
+      ? TECH_RANGE
+      : activeUnit.weapon.range
   }
 
   const render = () => {
@@ -182,7 +194,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     const techTargets =
       !activeUnit || isAnimating
         ? []
-        : pendingAction === 'invade'
+        : pendingAction === 'invade' || pendingAction === 'lockOn'
           ? techInvadeTargets(state, activeUnit)
           : pendingAction === 'shield'
             ? techShieldTargets(state, activeUnit)
@@ -231,7 +243,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
       activeUnit && !isAnimating && hoveredTile && previewAction
         ? (previewAction === 'attack'
             ? attackableTargets(state, activeUnit)
-            : previewAction === 'invade'
+            : previewAction === 'invade' || previewAction === 'lockOn'
               ? techInvadeTargets(state, activeUnit)
               : previewAction === 'shield'
                 ? techShieldTargets(state, activeUnit).filter((ally) => ally.id !== activeUnit.id)
@@ -245,7 +257,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
             {
               from: activeUnit.pos,
               to: hoveredTarget.pos,
-              kind: previewAction as 'attack' | 'invade' | 'shield',
+              kind: previewAction as 'attack' | 'invade' | 'shield' | 'lockOn',
             },
           ]
         : []
@@ -279,25 +291,47 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     renderRoster(roster, state, activeUnit?.id)
 
     const isPlayerTurn = !!activeUnit && activeUnit.team === 'player' && !isAnimating
+    const reactionLocked = !!activeUnit && hasStatus(activeUnit, 'braced')
     attackButton.disabled = !isPlayerTurn
-    overwatchButton.disabled = !isPlayerTurn || !!activeUnit?.overwatch
+    overwatchButton.disabled =
+      !isPlayerTurn || !!activeUnit?.overwatch || !!activeUnit?.brace || reactionLocked
+    overchargeButton.disabled = !isPlayerTurn
+    braceButton.disabled =
+      !isPlayerTurn || !!activeUnit?.brace || !!activeUnit?.overwatch || reactionLocked
+    stabilizeButton.disabled = !isPlayerTurn || activeUnit?.quickActionsUsed !== 0
+    lockOnButton.disabled = !isPlayerTurn
     invadeButton.disabled = !isPlayerTurn
     shieldButton.disabled = !isPlayerTurn
     endActivationButton.disabled = !isPlayerTurn
     attackButton.classList.toggle('armed', pendingAction === 'attack')
     invadeButton.classList.toggle('armed', pendingAction === 'invade')
     shieldButton.classList.toggle('armed', pendingAction === 'shield')
+    lockOnButton.classList.toggle('armed', pendingAction === 'lockOn')
 
     attackButton.title = activeUnit ? `Range: ${activeUnit.weapon.range}` : ''
     overwatchButton.title = !activeUnit
       ? ''
       : activeUnit.overwatch
         ? 'Already watching this activation'
-        : `Watches Range: ${activeUnit.weapon.range}`
+        : activeUnit.brace || reactionLocked
+          ? 'Only one reaction can be armed at a time'
+          : `Watches Range: ${activeUnit.weapon.range}`
     invadeButton.title = `Range: ${TECH_RANGE}`
     shieldButton.title = `Range: ${TECH_RANGE}`
+    overchargeButton.title = 'Free +1 quick action this activation, escalating heat cost'
+    braceButton.title = activeUnit?.brace
+      ? 'Already bracing'
+      : activeUnit?.overwatch || reactionLocked
+        ? 'Only one reaction can be armed at a time'
+        : 'Halves the next hit/Invade against you, but limits your next activation'
+    stabilizeButton.title =
+      activeUnit && activeUnit.quickActionsUsed !== 0
+        ? 'Must be your only action this activation'
+        : 'Full Action: clear Stunned/Impaired/Braced/weapon damage, vent half your heat, end your turn'
+    lockOnButton.title = `Range: ${TECH_RANGE} — next attack on the target gets an accuracy bonus`
 
     tutorial.notify(state, log)
+    contextualHints.setPaused(tutorial.isActive())
 
     if (outcome !== 'ongoing') {
       status.textContent = `Round ${state.round} — game over`
@@ -317,6 +351,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
   withHoverPreview(overwatchButton, 'overwatch')
   withHoverPreview(invadeButton, 'invade')
   withHoverPreview(shieldButton, 'shield')
+  withHoverPreview(lockOnButton, 'lockOn')
 
   // Drives both the sliding-move animation and in-flight projectiles off a single rAF loop.
   function ensureAnimLoop() {
@@ -414,6 +449,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
       state = after
       log = [...log, { action }]
       combatLog.record(before, action, state)
+      contextualHints.notify(before, action, state)
       render()
       scheduleAiTurnIfNeeded()
     }
@@ -524,6 +560,14 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
       return
     }
 
+    if (pendingAction === 'lockOn') {
+      if (clickedUnit && clickedUnit.team !== activeUnit.team) {
+        pendingAction = null
+        applyAction({ type: 'lockOn', unitId: activeUnit.id, targetId: clickedUnit.id })
+      }
+      return
+    }
+
     if (!clickedUnit) {
       applyAction({ type: 'move', unitId: activeUnit.id, to: clicked })
     }
@@ -541,6 +585,24 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     applyAction({ type: 'overwatch', unitId: activeUnit.id })
   })
 
+  overchargeButton.addEventListener('click', () => {
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+    applyAction({ type: 'overcharge', unitId: activeUnit.id })
+  })
+
+  braceButton.addEventListener('click', () => {
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+    applyAction({ type: 'brace', unitId: activeUnit.id })
+  })
+
+  stabilizeButton.addEventListener('click', () => {
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+    applyAction({ type: 'stabilize', unitId: activeUnit.id })
+  })
+
   attackButton.addEventListener('click', () => {
     pendingAction = pendingAction === 'attack' ? null : 'attack'
     render()
@@ -548,6 +610,11 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
 
   invadeButton.addEventListener('click', () => {
     pendingAction = pendingAction === 'invade' ? null : 'invade'
+    render()
+  })
+
+  lockOnButton.addEventListener('click', () => {
+    pendingAction = pendingAction === 'lockOn' ? null : 'lockOn'
     render()
   })
 
@@ -569,7 +636,10 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     scheduleAiTurnIfNeeded()
   })
 
-  tutorialButton.addEventListener('click', () => tutorial.restart())
+  tutorialButton.addEventListener('click', () => {
+    tutorial.restart()
+    contextualHints.reset()
+  })
 
   render()
   void preloadSprites().then(render)

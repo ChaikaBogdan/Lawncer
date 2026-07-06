@@ -22,6 +22,9 @@ function mech(id: string, team: TeamId, name: string, pos: Position, weapon: Wea
     evasion: 8,
     statuses: [],
     overwatch: false,
+    brace: false,
+    overchargeCount: 0,
+    weaponDisabled: false,
   }
 }
 
@@ -43,6 +46,10 @@ export function createDemoScenario(): GameState {
         { x: 7, y: 2 },
         { x: 6, y: 6 },
         { x: 1, y: 1 },
+      ],
+      cover: [
+        { x: 2, y: 4 },
+        { x: 5, y: 3 },
       ],
     },
     units: [

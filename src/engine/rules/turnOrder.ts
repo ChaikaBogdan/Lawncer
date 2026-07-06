@@ -41,7 +41,14 @@ export function advanceTurn(state: GameState): GameState {
     activeTeam: nextFirstTeam,
     activeUnitId: undefined,
     units: state.units.map((unit) =>
-      decayStatuses({ ...unit, hasActivated: false, quickActionsUsed: 0, overwatch: false })
+      decayStatuses({
+        ...unit,
+        hasActivated: false,
+        quickActionsUsed: 0,
+        overwatch: false,
+        brace: false,
+        overchargeCount: 0,
+      })
     ),
   }
 }

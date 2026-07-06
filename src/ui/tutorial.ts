@@ -75,9 +75,14 @@ export interface TutorialController {
   /** Call after every state change so gated steps can check whether the player has done the thing. */
   notify(state: GameState, log: ActionLog): void
   restart(): void
+  /** Whether the overlay is currently on screen — used to suppress contextual hints during onboarding. */
+  isActive(): boolean
 }
 
-export function mountTutorial(root: HTMLElement): TutorialController {
+export function mountTutorial(
+  root: HTMLElement,
+  onVisibilityChange?: (visible: boolean) => void
+): TutorialController {
   let stepIndex = 0
   let visible = typeof localStorage !== 'undefined' && localStorage.getItem(STORAGE_KEY) !== 'true'
 
@@ -137,6 +142,7 @@ export function mountTutorial(root: HTMLElement): TutorialController {
     localStorage.setItem(STORAGE_KEY, 'true')
     clearHighlight()
     render()
+    onVisibilityChange?.(false)
   }
 
   const advance = () => {
@@ -164,6 +170,10 @@ export function mountTutorial(root: HTMLElement): TutorialController {
       visible = true
       localStorage.removeItem(STORAGE_KEY)
       render()
+      onVisibilityChange?.(true)
+    },
+    isActive() {
+      return visible
     },
   }
 }

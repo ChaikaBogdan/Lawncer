@@ -3,7 +3,7 @@ import { RIFLE } from '../combat/weapons.ts'
 import type { MapState, UnitState } from '../state/types.ts'
 import { reachableTiles } from './grid.ts'
 
-const openMap: MapState = { width: 5, height: 5, walls: [] }
+const openMap: MapState = { width: 5, height: 5, walls: [], cover: [] }
 
 function unitAt(id: string, x: number, y: number): UnitState {
   return {
@@ -26,6 +26,9 @@ function unitAt(id: string, x: number, y: number): UnitState {
     evasion: 8,
     statuses: [],
     overwatch: false,
+    brace: false,
+    overchargeCount: 0,
+    weaponDisabled: false,
   }
 }
 
@@ -39,7 +42,7 @@ describe('reachableTiles', () => {
   })
 
   it('does not path through walls', () => {
-    const map: MapState = { width: 5, height: 5, walls: [{ x: 1, y: 0 }] }
+    const map: MapState = { width: 5, height: 5, walls: [{ x: 1, y: 0 }], cover: [] }
     const tiles = reachableTiles(map, [], { x: 0, y: 0 }, 1)
     expect(tiles).toEqual([{ x: 0, y: 1 }])
   })

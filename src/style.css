@@ -202,6 +202,18 @@ body {
   border: 1px solid var(--border);
 }
 
+.legend-swatch-cover {
+  background: rgba(250, 204, 21, 0.15);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(250, 204, 21, 0.4) 0,
+    rgba(250, 204, 21, 0.4) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+  border: 1px dashed rgba(250, 204, 21, 0.5);
+}
+
 .legend-dot-attack,
 .legend-dot-tech,
 .legend-dot-range {
@@ -462,6 +474,30 @@ body {
   background: var(--tech-accent);
 }
 
+.badge.engaged {
+  background: var(--status-warning);
+}
+
+.badge.brace {
+  background: var(--tech-accent);
+}
+
+.badge.braced {
+  background: var(--status-good);
+}
+
+.badge.rattled {
+  background: var(--status-warning);
+}
+
+.badge.exposed {
+  background: var(--status-critical);
+}
+
+.badge.lockedOn {
+  background: var(--tech-accent);
+}
+
 /* --- Combat log --- */
 
 .combat-log {
@@ -571,4 +607,62 @@ body {
 .tutorial-target {
   animation: tutorial-pulse 1.2s ease-in-out infinite;
   border-color: var(--tech-accent) !important;
+}
+
+/* --- Contextual hints --- */
+
+.hint-stack {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+  /* Only the cards themselves should catch clicks — the gaps between them (and empty stack
+     space before/after cards exist) must let clicks on the battlefield underneath through. */
+  pointer-events: none;
+}
+
+.hint-card {
+  position: relative;
+  pointer-events: auto;
+  background: var(--surface-panel);
+  border: 1px solid var(--tech-accent);
+  border-radius: 10px;
+  padding: 12px 28px 12px 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+.hint-card h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--tech-accent);
+}
+
+.hint-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.hint-card-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 4px;
+}
+
+.hint-card-close:hover {
+  color: var(--text-primary);
 }
