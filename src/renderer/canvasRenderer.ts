@@ -1,5 +1,5 @@
 import { isWall } from '../engine/map/grid.ts'
-import type { GameState, Position, UnitState } from '../engine/state/types.ts'
+import type { GameState, MapState, Position, UnitState } from '../engine/state/types.ts'
 import { isAlive } from '../engine/state/unit.ts'
 import playerSprite from '../assets/units/player.png'
 import enemySprite from '../assets/units/enemy.png'
@@ -16,6 +16,8 @@ const FLOOR_B = '#201f1d'
 const WALL_COLOR = '#4b4744'
 const WALL_HATCH = 'rgba(255, 255, 255, 0.18)'
 const WALL_BORDER = 'rgba(255, 255, 255, 0.25)'
+const COVER_HATCH = 'rgba(250, 204, 21, 0.28)'
+const COVER_BORDER = 'rgba(250, 204, 21, 0.4)'
 const GRIDLINE = 'rgba(255, 255, 255, 0.06)'
 const REACHABLE_FILL = 'rgba(12, 163, 12, 0.35)'
 const ATTACKABLE_FILL = 'rgba(230, 103, 103, 0.35)'
@@ -30,12 +32,13 @@ const HP_GOOD = '#0ca30c'
 const HP_WARNING = '#fab219'
 const HP_CRITICAL = '#d03b3b'
 
-export type ActionArrowKind = 'attack' | 'invade' | 'shield'
+export type ActionArrowKind = 'attack' | 'invade' | 'shield' | 'lockOn'
 
 const ARROW_COLOR: Record<ActionArrowKind, string> = {
   attack: '#e66767',
   invade: '#9085e9',
   shield: '#3987e5',
+  lockOn: '#facc15',
 }
 
 const spriteCache = new Map<string, HTMLImageElement>()
@@ -103,6 +106,33 @@ function drawWallHatch(ctx: CanvasRenderingContext2D, x: number, y: number): voi
   ctx.strokeStyle = WALL_BORDER
   ctx.lineWidth = 2
   ctx.strokeRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2)
+}
+
+function isCoverTile(map: MapState, pos: Position): boolean {
+  return map.cover.some((tile) => tile.x === pos.x && tile.y === pos.y)
+}
+
+/** Soft cover reads as a lighter, sparser hatch than a wall — passable, but still visually distinct terrain. */
+function drawCoverHatch(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, CELL_SIZE, CELL_SIZE)
+  ctx.clip()
+  ctx.strokeStyle = COVER_HATCH
+  ctx.lineWidth = 2
+  for (let offset = -CELL_SIZE; offset < CELL_SIZE * 2; offset += 14) {
+    ctx.beginPath()
+    ctx.moveTo(x + offset, y + CELL_SIZE)
+    ctx.lineTo(x + offset + CELL_SIZE, y)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  ctx.strokeStyle = COVER_BORDER
+  ctx.lineWidth = 2
+  ctx.setLineDash([4, 3])
+  ctx.strokeRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4)
+  ctx.setLineDash([])
 }
 
 /** A colored arrow from one tile's center to another, pulled back from both ends so it doesn't bury itself under the sprites. */
@@ -190,6 +220,10 @@ const STATUS_EMOJI: Record<string, string> = {
   stunned: '💫',
   impaired: '🔥',
   shielded: '🛡️',
+  braced: '🧱',
+  rattled: '😵',
+  exposed: '☢️',
+  lockedOn: '🎯',
 }
 
 /** Small emoji badges stacked in the sprite's top-left corner for each active status + Overwatch. */
@@ -203,6 +237,7 @@ function drawStatusEmojis(
   const emojis = [
     ...unit.statuses.map((s) => STATUS_EMOJI[s.type]).filter(Boolean),
     ...(unit.overwatch ? ['👁️'] : []),
+    ...(unit.brace ? ['🛑'] : []),
   ]
   if (emojis.length === 0) return
 
@@ -279,6 +314,7 @@ export function drawState(
       ctx.fillStyle = wall ? WALL_COLOR : (x + y) % 2 === 0 ? FLOOR_A : FLOOR_B
       ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
       if (wall) drawWallHatch(ctx, x * CELL_SIZE, y * CELL_SIZE)
+      else if (isCoverTile(map, pos)) drawCoverHatch(ctx, x * CELL_SIZE, y * CELL_SIZE)
     }
   }
 

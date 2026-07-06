@@ -24,6 +24,9 @@ function baseUnit(overrides: Partial<UnitState> = {}): UnitState {
     evasion: 8,
     statuses: [],
     overwatch: false,
+    brace: false,
+    overchargeCount: 0,
+    weaponDisabled: false,
     ...overrides,
   }
 }
@@ -59,5 +62,11 @@ describe('decayStatuses', () => {
 
     const expired = decayStatuses(oneRoundLeft)
     expect(expired.statuses).toEqual([])
+  })
+
+  it('never decays Exposed — only an explicit Stabilize clears it', () => {
+    const exposed = withStatus(baseUnit(), 'exposed', 1)
+    const afterManyRounds = decayStatuses(decayStatuses(decayStatuses(exposed)))
+    expect(afterManyRounds.statuses).toEqual([{ type: 'exposed', roundsRemaining: 1 }])
   })
 })

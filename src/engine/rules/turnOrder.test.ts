@@ -24,6 +24,9 @@ function unit(id: string, team: UnitState['team']): UnitState {
     evasion: 8,
     statuses: [],
     overwatch: false,
+    brace: false,
+    overchargeCount: 0,
+    weaponDisabled: false,
   }
 }
 
@@ -33,7 +36,7 @@ function baseState(units: UnitState[]): GameState {
     activeTeam: 'player',
     firstTeamThisRound: 'player',
     units,
-    map: { width: 5, height: 5, walls: [] },
+    map: { width: 5, height: 5, walls: [], cover: [] },
     rngSeed: 'test-seed',
     rngCalls: 0,
   }
@@ -82,5 +85,22 @@ describe('turn order', () => {
     expect(state.firstTeamThisRound).toBe('enemy')
     expect(state.activeTeam).toBe('enemy')
     expect(state.units.every((u) => !u.hasActivated)).toBe(true)
+  })
+
+  it('clears an unused armed Brace and resets Overcharge count at round rollover', () => {
+    let state = baseState([
+      { ...unit('p1', 'player'), brace: true, overchargeCount: 2 },
+      unit('e1', 'enemy'),
+    ])
+    state = {
+      ...state,
+      units: state.units.map((u) => ({ ...u, hasActivated: true })),
+    }
+
+    state = advanceTurn(state)
+
+    const p1 = state.units.find((u) => u.id === 'p1')!
+    expect(p1.brace).toBe(false)
+    expect(p1.overchargeCount).toBe(0)
   })
 })

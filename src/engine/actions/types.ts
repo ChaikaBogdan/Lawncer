@@ -31,10 +31,35 @@ export interface TechShieldAction {
   targetId: string
 }
 
-/** Arms a reaction: the next enemy to move into this unit's weapon range/LOS eats a free attack. */
+/** Arms a reaction: the next enemy that starts moving from within this unit's weapon range/LOS eats a free attack. */
 export interface OverwatchAction {
   type: 'overwatch'
   unitId: string
+}
+
+/** Pushes the reactor for a free extra quick action this activation, at an escalating heat cost. */
+export interface OverchargeAction {
+  type: 'overcharge'
+  unitId: string
+}
+
+/** Arms a reaction: the next attack or Invade targeting this unit has its damage/heat halved. */
+export interface BraceAction {
+  type: 'brace'
+  unitId: string
+}
+
+/** A Full Action: must be the unit's only action this activation. Clears debuffs, vents heat, ends the turn. */
+export interface StabilizeAction {
+  type: 'stabilize'
+  unitId: string
+}
+
+/** Marks a target Locked On: the next attack against them (by anyone) gets an accuracy bonus, then it's consumed. */
+export interface LockOnAction {
+  type: 'lockOn'
+  unitId: string
+  targetId: string
 }
 
 export type Action =
@@ -44,3 +69,7 @@ export type Action =
   | TechInvadeAction
   | TechShieldAction
   | OverwatchAction
+  | OverchargeAction
+  | BraceAction
+  | StabilizeAction
+  | LockOnAction

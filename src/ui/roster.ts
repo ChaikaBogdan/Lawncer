@@ -1,3 +1,4 @@
+import { isEngaged } from '../engine/rules/engagement.ts'
 import type { GameState, UnitState } from '../engine/state/types.ts'
 import { isAlive } from '../engine/state/unit.ts'
 
@@ -19,10 +20,14 @@ function pipRow(value: number, max: number): string {
   return `<div class="pip-row">${Array.from({ length: max }, (_, i) => `<span class="pip${i < value ? ' filled' : ''}"></span>`).join('')}</div>`
 }
 
-function unitCard(unit: UnitState, isActive: boolean): string {
+function unitCard(state: GameState, unit: UnitState, isActive: boolean): string {
   const badges = [
     ...unit.statuses.map((s) => `<span class="badge ${s.type}">${s.type}</span>`),
     ...(unit.overwatch ? ['<span class="badge overwatch">overwatch</span>'] : []),
+    ...(unit.brace ? ['<span class="badge brace">bracing</span>'] : []),
+    ...(isAlive(unit) && isEngaged(state, unit)
+      ? ['<span class="badge engaged">engaged</span>']
+      : []),
   ].join('')
 
   return `
@@ -73,11 +78,11 @@ export function renderRoster(
   container.innerHTML = `
     <div class="roster-team" data-team="player">
       <h4>Player</h4>
-      ${player.map((u) => unitCard(u, u.id === activeUnitId)).join('')}
+      ${player.map((u) => unitCard(state, u, u.id === activeUnitId)).join('')}
     </div>
     <div class="roster-team" data-team="enemy">
       <h4>Enemy</h4>
-      ${enemy.map((u) => unitCard(u, u.id === activeUnitId)).join('')}
+      ${enemy.map((u) => unitCard(state, u, u.id === activeUnitId)).join('')}
     </div>
   `
 }

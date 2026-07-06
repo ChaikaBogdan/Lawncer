@@ -8,6 +8,7 @@ const TILE_ITEMS: LegendItem[] = [
   { swatch: 'legend-swatch-attackable', label: 'Attack' },
   { swatch: 'legend-swatch-tech', label: 'Tech target' },
   { swatch: 'legend-swatch-wall', label: 'Impassable' },
+  { swatch: 'legend-swatch-cover', label: 'Cover (harder to hit at range)' },
   { swatch: 'legend-swatch-enemy-threat', label: 'Unit can move here (hover any other unit)' },
 ]
 

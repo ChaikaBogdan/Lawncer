@@ -27,7 +27,7 @@ function describeBase(before: GameState, action: Action, after: GameState): stri
 
   switch (action.type) {
     case 'move': {
-      const moveLine = `${actorName} moves to (${action.to.x}, ${action.to.y})`
+      const moveLine = `🏃 ${actorName} moves to (${action.to.x}, ${action.to.y})`
       const reacted = before.lastAttack !== after.lastAttack && after.lastAttack
       if (reacted && after.lastAttack) {
         return `${moveLine} — ⚠️ ${unitName(after, after.lastAttack.attackerId)} reacts: ${describeAttackResult(after)}`
@@ -35,15 +35,23 @@ function describeBase(before: GameState, action: Action, after: GameState): stri
       return moveLine
     }
     case 'attack':
-      return `${actorName} attacks ${unitName(before, action.targetId)} — ${describeAttackResult(after)}`
+      return `⚔️ ${actorName} attacks ${unitName(before, action.targetId)} — ${describeAttackResult(after)}`
     case 'techInvade':
-      return `${actorName} invades ${unitName(before, action.targetId)} — reactor overload`
+      return `🛰️ ${actorName} invades ${unitName(before, action.targetId)} — reactor overload`
     case 'techShield':
-      return `${actorName} shields ${unitName(before, action.targetId)}`
+      return `🛡️ ${actorName} shields ${unitName(before, action.targetId)}`
     case 'overwatch':
-      return `${actorName} arms Overwatch`
+      return `👁️ ${actorName} arms Overwatch`
+    case 'overcharge':
+      return `🔥 ${actorName} overcharges the reactor`
+    case 'brace':
+      return `🛑 ${actorName} braces for impact`
+    case 'stabilize':
+      return `🔧 ${actorName} stabilizes`
+    case 'lockOn':
+      return `🎯 ${actorName} locks on to ${unitName(before, action.targetId)}`
     case 'endActivation':
-      return `${actorName} ends activation`
+      return `⏭️ ${actorName} ends activation`
   }
 }
 

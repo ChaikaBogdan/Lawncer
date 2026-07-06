@@ -2,12 +2,16 @@ import { createRng } from '../state/rng.ts'
 import type { GameState } from '../state/types.ts'
 
 /**
- * Rolls a d20 deterministically from the state's seed and call counter, then
+ * Rolls an n-sided die deterministically from the state's seed and call counter, then
  * advances the counter. Replaying the same action log reproduces the same
  * rolls because it re-runs resolve() in the same order from the same seed.
  */
-export function rollD20(state: GameState): { roll: number; state: GameState } {
+export function rollDie(state: GameState, sides: number): { roll: number; state: GameState } {
   const rng = createRng(`${state.rngSeed}:${state.rngCalls}`)
-  const roll = Math.floor(rng.next() * 20) + 1
+  const roll = Math.floor(rng.next() * sides) + 1
   return { roll, state: { ...state, rngCalls: state.rngCalls + 1 } }
+}
+
+export function rollD20(state: GameState): { roll: number; state: GameState } {
+  return rollDie(state, 20)
 }

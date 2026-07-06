@@ -24,6 +24,9 @@ function baseUnit(overrides: Partial<UnitState> = {}): UnitState {
     evasion: 8,
     statuses: [],
     overwatch: false,
+    brace: false,
+    overchargeCount: 0,
+    weaponDisabled: false,
     ...overrides,
   }
 }
@@ -41,14 +44,13 @@ describe('applyHeat', () => {
     expect(result.stress).toBe(2)
   })
 
-  it('leaves a surviving unit Impaired after a stress box is consumed', () => {
+  it("does not touch statuses — narrative outcomes are the stress table orchestration's job", () => {
     const result = applyHeat(baseUnit({ heat: 3, heatCap: 4 }), 1)
-    expect(result.statuses).toEqual([{ type: 'impaired', roundsRemaining: 2 }])
+    expect(result.statuses).toEqual([])
   })
 
-  it('does not apply Impaired to a unit destroyed by the stress loss', () => {
+  it('destroys a unit whose last stress box is consumed', () => {
     const result = applyHeat(baseUnit({ heat: 3, heatCap: 4, stress: 1 }), 1)
     expect(result.stress).toBe(0)
-    expect(result.statuses).toEqual([])
   })
 })
