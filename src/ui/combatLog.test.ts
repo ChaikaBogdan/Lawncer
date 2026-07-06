@@ -63,6 +63,44 @@ describe('describeAction', () => {
     )
   })
 
+  it('describes a hit techInvade using the resulting lastAttack roll', () => {
+    const before = createDemoScenario()
+    const after = {
+      ...before,
+      lastAttack: {
+        attackerId: 'player-1',
+        targetId: 'enemy-1',
+        roll: 14,
+        evasion: 8,
+        hit: true,
+        crit: false,
+        damage: 2,
+      },
+    }
+    expect(
+      describeAction(before, { type: 'techInvade', unitId: 'player-1', targetId: 'enemy-1' }, after)
+    ).toBe('🛰️ Everest invades Sentinel — rolled 14 vs Evasion 8 — HIT for 2 heat')
+  })
+
+  it('describes a missed techInvade without a heat suffix', () => {
+    const before = createDemoScenario()
+    const after = {
+      ...before,
+      lastAttack: {
+        attackerId: 'player-1',
+        targetId: 'enemy-1',
+        roll: 3,
+        evasion: 8,
+        hit: false,
+        crit: false,
+        damage: 0,
+      },
+    }
+    expect(
+      describeAction(before, { type: 'techInvade', unitId: 'player-1', targetId: 'enemy-1' }, after)
+    ).toBe('🛰️ Everest invades Sentinel — rolled 3 vs Evasion 8 — MISS')
+  })
+
   it('describes a plain move with no reaction', () => {
     const before = createDemoScenario()
     const after = { ...before }

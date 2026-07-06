@@ -2,9 +2,9 @@ import type { GameState } from '../state/types.ts'
 import { rollDie } from './dice.ts'
 
 /**
- * Overcharge's heat cost escalates each time it's used this activation: flat 1, then 1d3, 1d6,
- * 1d6+4. Using it a 5th+ time (unusual, but not disallowed) just repeats the last tier rather
- * than growing further or throwing.
+ * Overcharge's heat cost escalates the more times it's been used this whole scenario (usable only
+ * once per activation, see resolveOvercharge): flat 1, then 1d3, 1d6, 1d6+4. Using it a 5th+ time
+ * across a long battle just repeats the last tier rather than growing further or throwing.
  */
 export function rollOverchargeHeat(
   state: GameState,

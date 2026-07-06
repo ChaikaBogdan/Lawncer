@@ -11,6 +11,7 @@ function unit(overrides: Partial<UnitState> = {}): UnitState {
     pos: { x: 0, y: 0 },
     moveSpeed: 3,
     hasActivated: false,
+    hasMoved: false,
     quickActionsUsed: 0,
     hp: 4,
     maxHp: 4,
@@ -22,10 +23,16 @@ function unit(overrides: Partial<UnitState> = {}): UnitState {
     maxStress: 3,
     weapon: RIFLE,
     evasion: 8,
+    armor: 0,
+    aiBehavior: 'aggressive',
+    systemReactionStatus: 'extendedRange',
     statuses: [],
     overwatch: false,
+    systemReactionArmed: false,
+    systemReactionUses: 0,
     brace: false,
     overchargeCount: 0,
+    hasOvercharged: false,
     weaponDisabled: false,
     ...overrides,
   }
@@ -68,9 +75,9 @@ describe('isEngaged', () => {
     expect(isEngaged(stateWith([me, foe]), me)).toBe(false)
   })
 
-  it('does not count a diagonal neighbor as adjacent (orthogonal grid)', () => {
+  it('counts a diagonal neighbor as adjacent (8-directional grid)', () => {
     const me = unit({ id: 'me', pos: { x: 1, y: 1 } })
     const foe = unit({ id: 'foe', team: 'enemy', pos: { x: 2, y: 2 } })
-    expect(isEngaged(stateWith([me, foe]), me)).toBe(false)
+    expect(isEngaged(stateWith([me, foe]), me)).toBe(true)
   })
 })

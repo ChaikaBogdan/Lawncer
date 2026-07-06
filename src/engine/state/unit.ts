@@ -18,12 +18,12 @@ export function withStatus(unit: UnitState, type: StatusType, roundsRemaining: n
 
 /**
  * A system-shocked (stunned) or braced unit only gets 1 quick action instead of the usual
- * budget; Overcharge grants +1 on top of that base for each time it's been used this activation.
+ * budget; Overcharge grants +1 on top of that base, once per activation (see resolveOvercharge).
  */
 export function quickActionBudget(unit: UnitState): number {
   const base =
     hasStatus(unit, 'stunned') || hasStatus(unit, 'braced') ? 1 : QUICK_ACTIONS_PER_ACTIVATION
-  return base + unit.overchargeCount
+  return base + (unit.hasOvercharged ? 1 : 0)
 }
 
 /**
@@ -38,6 +38,23 @@ export function consumeBraceIfArmed(unit: UnitState): { unit: UnitState; halved:
 /** Reactor instability (impaired) blunts weapon damage, to a minimum of 1. */
 export function effectiveWeaponDamage(unit: UnitState): number {
   return hasStatus(unit, 'impaired') ? Math.max(1, unit.weapon.damage - 1) : unit.weapon.damage
+}
+
+/** Everest's System Reaction (Extend Range): +1 weapon range for its next activation. */
+export function effectiveRange(unit: UnitState): number {
+  return unit.weapon.range + (hasStatus(unit, 'extendedRange') ? 1 : 0)
+}
+
+/** Wraith's System Reaction (Boost): +1 move speed for its next activation. */
+export function effectiveMoveSpeed(unit: UnitState): number {
+  return unit.moveSpeed + (hasStatus(unit, 'boosted') ? 1 : 0)
+}
+
+/** Barbarossa's (Guard, +1) and Sentinel's (Entrench, +2) System Reactions: a flat Evasion bonus. */
+export function systemReactionEvasionBonus(unit: UnitState): number {
+  if (hasStatus(unit, 'entrenched')) return 2
+  if (hasStatus(unit, 'guarded')) return 1
+  return 0
 }
 
 /**

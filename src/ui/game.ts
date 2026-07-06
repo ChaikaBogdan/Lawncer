@@ -1,5 +1,5 @@
 import { chooseAiAction } from '../engine/ai/simpleAi.ts'
-import { resolve } from '../engine/combat/resolve.ts'
+import { resolve, SYSTEM_REACTION_CHARGES } from '../engine/combat/resolve.ts'
 import { TECH_RANGE } from '../engine/combat/tech.ts'
 import { reachableTiles } from '../engine/map/grid.ts'
 import {
@@ -10,12 +10,14 @@ import {
 import { getGameOutcome } from '../engine/rules/outcome.ts'
 import { getActiveUnit } from '../engine/rules/turnOrder.ts'
 import { replay, type ActionLog } from '../engine/state/log.ts'
+import type { GameState, Position, UnitState } from '../engine/state/types.ts'
 import {
-  QUICK_ACTIONS_PER_ACTIVATION,
-  type GameState,
-  type Position,
-} from '../engine/state/types.ts'
-import { hasStatus, isAlive } from '../engine/state/unit.ts'
+  effectiveMoveSpeed,
+  effectiveRange,
+  hasStatus,
+  isAlive,
+  quickActionBudget,
+} from '../engine/state/unit.ts'
 import {
   CELL_SIZE,
   drawState,
@@ -25,7 +27,13 @@ import {
 import { mountCombatLog } from './combatLog.ts'
 import { mountContextualHints } from './contextualHints.ts'
 import { createLegend } from './legend.ts'
-import { renderRoster } from './roster.ts'
+import {
+  describeUnit,
+  renderRoster,
+  SYSTEM_REACTION_DESCRIPTIONS,
+  SYSTEM_REACTION_LABELS,
+} from './roster.ts'
+import { mountTooltip } from './tooltip.ts'
 import { mountTutorial } from './tutorial.ts'
 
 const AI_MOVE_DELAY_MS = 500
@@ -33,7 +41,8 @@ const MOVE_DURATION_MS = 260
 const PROJECTILE_DURATION_MS = 320
 
 type PendingAction = 'attack' | 'invade' | 'shield' | 'lockOn' | null
-type HoveredAction = 'attack' | 'overwatch' | 'invade' | 'shield' | 'lockOn' | null
+type HoveredAction =
+  'attack' | 'overwatch' | 'systemReaction' | 'invade' | 'shield' | 'lockOn' | null
 
 interface Projectile {
   from: Position
@@ -58,6 +67,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
   let hoveredAction: HoveredAction = null
   let animationLock = false
   let hoveredTile: Position | null = null
+  let lastHoveredUnit: UnitState | undefined
   let movingUnit: { id: string; pos: Position } | null = null
   let projectiles: Projectile[] = []
   let animLoopRunning = false
@@ -78,6 +88,14 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
   canvas.width = state.map.width * CELL_SIZE
   canvas.height = state.map.height * CELL_SIZE
   canvas.className = 'battle-grid'
+  // The stage/column are unstyled-width containers; size them here so they track the canvas's
+  // actual pixel dimensions (which scale with the map) instead of a fixed 8x8-sized layout. The
+  // column needs a hard pixel width, not fit-content — otherwise the legend's long unwrapped
+  // labels (with nothing else constraining line width) stretch it wider than the canvas, which
+  // then drags the actions column/roster off to the right and stretches the full-width combat log.
+  battlefieldStage.style.width = `${canvas.width + 2}px`
+  battlefieldStage.style.height = `${canvas.height + 2}px`
+  battlefieldColumn.style.width = `${canvas.width + 2}px`
 
   const hitFlash = document.createElement('div')
   hitFlash.className = 'hit-flash'
@@ -95,6 +113,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
 
   const attackButton = makeButton('⚔️ Attack', 'attack')
   const overwatchButton = makeButton('👁️ Overwatch', 'overwatch')
+  const systemReactionButton = makeButton('⚙️ System Reaction', 'systemReaction')
   const overchargeButton = makeButton('🔥 Overcharge', 'overcharge')
   const braceButton = makeButton('🛑 Brace', 'brace')
   const stabilizeButton = makeButton('🔧 Stabilize', 'stabilize')
@@ -112,6 +131,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
   controls.append(
     attackButton,
     overwatchButton,
+    systemReactionButton,
     overchargeButton,
     braceButton,
     stabilizeButton,
@@ -124,21 +144,36 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     tutorialButton
   )
 
-  battlefieldColumn.append(battlefieldStage, status, gameOverBanner, createLegend(), controls)
+  battlefieldColumn.append(battlefieldStage, status, gameOverBanner, createLegend())
 
   const roster = document.createElement('aside')
   roster.className = 'roster'
 
-  shell.append(battlefieldColumn, roster)
+  shell.append(battlefieldColumn, controls, roster)
 
   root.append(shell)
-  const combatLog = mountCombatLog(root)
+  const combatLog = mountCombatLog(battlefieldColumn)
   const contextualHints = mountContextualHints(root)
 
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('2D canvas context unavailable')
 
   const tutorial = mountTutorial(root, (visible) => contextualHints.setPaused(visible))
+  const tooltip = mountTooltip(root)
+
+  const buttonTooltip: Record<string, string> = {}
+  tooltip.attach(attackButton, () => buttonTooltip.attack ?? '')
+  tooltip.attach(overwatchButton, () => buttonTooltip.overwatch ?? '')
+  tooltip.attach(systemReactionButton, () => buttonTooltip.systemReaction ?? '')
+  tooltip.attach(overchargeButton, () => buttonTooltip.overcharge ?? '')
+  tooltip.attach(braceButton, () => buttonTooltip.brace ?? '')
+  tooltip.attach(stabilizeButton, () => buttonTooltip.stabilize ?? '')
+  tooltip.attach(lockOnButton, () => buttonTooltip.lockOn ?? '')
+  tooltip.attach(invadeButton, () => buttonTooltip.invade ?? '')
+  tooltip.attach(shieldButton, () => buttonTooltip.shield ?? '')
+  tooltip.attach(endActivationButton, () => 'Passes the rest of this activation’s quick actions.')
+  tooltip.attach(resetButton, () => 'Restarts the scenario from its initial setup.')
+  tooltip.attach(tutorialButton, () => 'Replays the onboarding walkthrough.')
 
   // Hovering a targeted-action button previews its range (and, for attack/invade/shield, arrows to valid targets).
   const withHoverPreview = (button: HTMLButtonElement, action: Exclude<HoveredAction, null>) => {
@@ -158,7 +193,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
   ): number {
     return action === 'invade' || action === 'shield' || action === 'lockOn'
       ? TECH_RANGE
-      : activeUnit.weapon.range
+      : effectiveRange(activeUnit)
   }
 
   const render = () => {
@@ -181,7 +216,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     const isAnimating = !!movingUnit || projectiles.length > 0
 
     const reachable =
-      activeUnit && !isAnimating
+      activeUnit && !isAnimating && !activeUnit.hasMoved && !hasStatus(activeUnit, 'braced')
         ? reachableTiles(
             state.map,
             state.units,
@@ -191,6 +226,9 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
           )
         : []
     const attackable = activeUnit && !isAnimating ? attackableTargets(state, activeUnit) : []
+    // Computed unconditionally (not just while Invade/Lock On is armed) so the buttons can be
+    // disabled when nothing is in tech range yet — same reasoning as Attack below.
+    const invadeable = activeUnit && !isAnimating ? techInvadeTargets(state, activeUnit) : []
     const techTargets =
       !activeUnit || isAnimating
         ? []
@@ -201,7 +239,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
             : []
 
     // Hovering any unit other than the one currently deciding shows its threat/support range
-    // (move cells + weapon/tech reach) instead of our own move-preview dots — more useful than
+    // (move cells + weapon/tech reach) instead of our own decision overlays — more useful than
     // previewing our own already-visible move/attack tiles.
     const hoveredUnit = hoveredTile
       ? state.units.find(
@@ -220,21 +258,6 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
             inspectedUnit.id
           )
         : []
-
-    const movePreview = inspectedUnit
-      ? {
-          attack: inspectedReachable.filter(
-            (pos) => attackableTargets(state, { ...inspectedUnit, pos }).length > 0
-          ),
-          tech: inspectedReachable.filter((pos) => {
-            const hypothetical = { ...inspectedUnit, pos }
-            return (
-              techInvadeTargets(state, hypothetical).length > 0 ||
-              techShieldTargets(state, hypothetical).some((ally) => ally.id !== inspectedUnit.id)
-            )
-          }),
-        }
-      : { attack: [], tech: [] }
 
     const previewAction: HoveredAction = hoveredAction ?? pendingAction
     // Only the target tile actually under the cursor gets an arrow — showing every valid target
@@ -277,8 +300,15 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
         ? { pos: inspectedUnit.pos, range: inspectedUnit.weapon.range }
         : undefined,
       inspectedReachable,
-      movePreview,
       actionArrows,
+      moveRange:
+        activeUnit &&
+        !isAnimating &&
+        activeUnit.team === 'player' &&
+        !activeUnit.hasMoved &&
+        !hasStatus(activeUnit, 'braced')
+          ? { pos: activeUnit.pos, speed: effectiveMoveSpeed(activeUnit) }
+          : undefined,
       movingUnit: movingUnit ?? undefined,
       projectiles: projectiles.map((p) => ({
         from: p.from,
@@ -288,19 +318,28 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
       })),
     })
 
-    renderRoster(roster, state, activeUnit?.id)
+    renderRoster(roster, state, activeUnit?.id, tooltip)
+
+    lastHoveredUnit = hoveredUnit
 
     const isPlayerTurn = !!activeUnit && activeUnit.team === 'player' && !isAnimating
     const reactionLocked = !!activeUnit && hasStatus(activeUnit, 'braced')
-    attackButton.disabled = !isPlayerTurn
+    attackButton.disabled = !isPlayerTurn || attackable.length === 0
     overwatchButton.disabled =
       !isPlayerTurn || !!activeUnit?.overwatch || !!activeUnit?.brace || reactionLocked
-    overchargeButton.disabled = !isPlayerTurn
+    systemReactionButton.disabled =
+      !isPlayerTurn ||
+      !!activeUnit?.systemReactionArmed ||
+      (activeUnit?.systemReactionUses ?? 0) >= SYSTEM_REACTION_CHARGES
+    systemReactionButton.textContent = activeUnit
+      ? (SYSTEM_REACTION_LABELS[activeUnit.systemReactionStatus] ?? '⚙️ System Reaction')
+      : '⚙️ System Reaction'
+    overchargeButton.disabled = !isPlayerTurn || !!activeUnit?.hasOvercharged || reactionLocked
     braceButton.disabled =
       !isPlayerTurn || !!activeUnit?.brace || !!activeUnit?.overwatch || reactionLocked
     stabilizeButton.disabled = !isPlayerTurn || activeUnit?.quickActionsUsed !== 0
-    lockOnButton.disabled = !isPlayerTurn
-    invadeButton.disabled = !isPlayerTurn
+    lockOnButton.disabled = !isPlayerTurn || invadeable.length === 0
+    invadeButton.disabled = !isPlayerTurn || invadeable.length === 0
     shieldButton.disabled = !isPlayerTurn
     endActivationButton.disabled = !isPlayerTurn
     attackButton.classList.toggle('armed', pendingAction === 'attack')
@@ -308,27 +347,48 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     shieldButton.classList.toggle('armed', pendingAction === 'shield')
     lockOnButton.classList.toggle('armed', pendingAction === 'lockOn')
 
-    attackButton.title = activeUnit ? `Range: ${activeUnit.weapon.range}` : ''
-    overwatchButton.title = !activeUnit
+    buttonTooltip.attack = !activeUnit
+      ? ''
+      : attackable.length === 0
+        ? `Attack — Range ${activeUnit.weapon.range}. No target in range yet — move closer first.`
+        : `Attack — Range ${activeUnit.weapon.range}. Rolls a d20 against the target's Evasion.`
+    buttonTooltip.overwatch = !activeUnit
       ? ''
       : activeUnit.overwatch
         ? 'Already watching this activation'
         : activeUnit.brace || reactionLocked
           ? 'Only one reaction can be armed at a time'
-          : `Watches Range: ${activeUnit.weapon.range}`
-    invadeButton.title = `Range: ${TECH_RANGE}`
-    shieldButton.title = `Range: ${TECH_RANGE}`
-    overchargeButton.title = 'Free +1 quick action this activation, escalating heat cost'
-    braceButton.title = activeUnit?.brace
+          : `Overwatch — Watches Range ${activeUnit.weapon.range}. Free reaction attack if an enemy moves out of it.`
+    buttonTooltip.systemReaction = !activeUnit
+      ? ''
+      : activeUnit.systemReactionArmed
+        ? 'Already armed this activation'
+        : activeUnit.systemReactionUses >= SYSTEM_REACTION_CHARGES
+          ? 'No charges left this battle (Limited 2)'
+          : `${SYSTEM_REACTION_DESCRIPTIONS[activeUnit.systemReactionStatus] ?? ''} Limited ${SYSTEM_REACTION_CHARGES} — ${SYSTEM_REACTION_CHARGES - activeUnit.systemReactionUses} left this battle.`
+    buttonTooltip.invade =
+      activeUnit && invadeable.length === 0
+        ? `Invade — Range ${TECH_RANGE}. No enemy in tech range yet — move closer first.`
+        : `Invade — Range ${TECH_RANGE}. Rolls a d20 against the target's Evasion; a hit floods them with heat instead of damage.`
+    buttonTooltip.shield = `Shield — Range ${TECH_RANGE}. Reduces incoming damage to an ally (or yourself) for a couple of rounds.`
+    buttonTooltip.overcharge = activeUnit?.hasOvercharged
+      ? 'Already overcharged this activation'
+      : reactionLocked
+        ? 'Braced — no Overcharge until it wears off'
+        : 'Overcharge — Free +1 quick action this activation only. Once per activation; heat cost escalates the more times you use it this battle.'
+    buttonTooltip.brace = activeUnit?.brace
       ? 'Already bracing'
       : activeUnit?.overwatch || reactionLocked
         ? 'Only one reaction can be armed at a time'
-        : 'Halves the next hit/Invade against you, but limits your next activation'
-    stabilizeButton.title =
+        : "Brace — Halves the next hit/Invade against you, but locks out your next activation's move, Overcharge, and reactions, and caps it to 1 quick action."
+    buttonTooltip.stabilize =
       activeUnit && activeUnit.quickActionsUsed !== 0
         ? 'Must be your only action this activation'
-        : 'Full Action: clear Stunned/Impaired/Braced/weapon damage, vent half your heat, end your turn'
-    lockOnButton.title = `Range: ${TECH_RANGE} — next attack on the target gets an accuracy bonus`
+        : 'Stabilize — Full Action: clears Stunned/Impaired/Braced/weapon damage, vents half your heat, ends your turn.'
+    buttonTooltip.lockOn =
+      activeUnit && invadeable.length === 0
+        ? `Lock On — Range ${TECH_RANGE}. No enemy in tech range yet — move closer first.`
+        : `Lock On — Range ${TECH_RANGE}. Next attack on the target (by anyone) gets an accuracy bonus.`
 
     tutorial.notify(state, log)
     contextualHints.setPaused(tutorial.isActive())
@@ -343,12 +403,14 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
       return
     }
 
-    const remaining = QUICK_ACTIONS_PER_ACTIVATION - activeUnit.quickActionsUsed
-    status.textContent = `Round ${state.round} — ${activeUnit.team.toUpperCase()} activating ${activeUnit.name} (${remaining} quick action${remaining === 1 ? '' : 's'} left)`
+    const remaining = quickActionBudget(activeUnit) - activeUnit.quickActionsUsed
+    const moveSuffix = activeUnit.hasMoved ? ' · move used' : ''
+    status.textContent = `Round ${state.round} — ${activeUnit.team.toUpperCase()} activating ${activeUnit.name} (${remaining} quick action${remaining === 1 ? '' : 's'} left)${moveSuffix}`
   }
 
   withHoverPreview(attackButton, 'attack')
   withHoverPreview(overwatchButton, 'overwatch')
+  withHoverPreview(systemReactionButton, 'systemReaction')
   withHoverPreview(invadeButton, 'invade')
   withHoverPreview(shieldButton, 'shield')
   withHoverPreview(lockOnButton, 'lockOn')
@@ -463,7 +525,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
         if (startGen !== generation) return
         commit()
         if (action.type === 'attack' && state.lastAttack?.hit) triggerImpact('weapon')
-        if (action.type === 'techInvade') triggerImpact('tech')
+        if (action.type === 'techInvade' && state.lastAttack?.hit) triggerImpact('tech')
         animationLock = false
       })
       return
@@ -510,12 +572,16 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
       x: Math.floor(((event.clientX - rect.left) / rect.width) * state.map.width),
       y: Math.floor(((event.clientY - rect.top) / rect.height) * state.map.height),
     }
-    if (hoveredTile && hoveredTile.x === tile.x && hoveredTile.y === tile.y) return
-    hoveredTile = tile
-    render()
+    if (!hoveredTile || hoveredTile.x !== tile.x || hoveredTile.y !== tile.y) {
+      hoveredTile = tile
+      render()
+    }
+    if (lastHoveredUnit) tooltip.show(describeUnit(lastHoveredUnit), event.clientX, event.clientY)
+    else tooltip.hide()
   })
 
   canvas.addEventListener('mouseleave', () => {
+    tooltip.hide()
     if (!hoveredTile) return
     hoveredTile = null
     render()
@@ -583,6 +649,12 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
     const activeUnit = getActiveUnit(state)
     if (!activeUnit || activeUnit.team !== 'player') return
     applyAction({ type: 'overwatch', unitId: activeUnit.id })
+  })
+
+  systemReactionButton.addEventListener('click', () => {
+    const activeUnit = getActiveUnit(state)
+    if (!activeUnit || activeUnit.team !== 'player') return
+    applyAction({ type: 'systemReaction', unitId: activeUnit.id })
   })
 
   overchargeButton.addEventListener('click', () => {

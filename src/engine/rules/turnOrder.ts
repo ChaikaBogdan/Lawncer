@@ -45,9 +45,11 @@ export function advanceTurn(state: GameState): GameState {
         ...unit,
         hasActivated: false,
         quickActionsUsed: 0,
+        hasMoved: false,
         overwatch: false,
         brace: false,
-        overchargeCount: 0,
+        systemReactionArmed: false,
+        hasOvercharged: false,
       })
     ),
   }

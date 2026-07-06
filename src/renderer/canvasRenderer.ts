@@ -1,9 +1,13 @@
-import { isWall } from '../engine/map/grid.ts'
+import { chebyshevDistance, isWall } from '../engine/map/grid.ts'
 import type { GameState, MapState, Position, UnitState } from '../engine/state/types.ts'
 import { isAlive } from '../engine/state/unit.ts'
-import playerSprite from '../assets/units/player.png'
-import enemySprite from '../assets/units/enemy.png'
+import playerSprite from '../assets/player.png'
+import enemySprite from '../assets/enemy.png'
+import tileSprite from '../assets/tile.png'
+import coverSprite from '../assets/cover.png'
+import wallSprite from '../assets/wall.png'
 
+/** Every tile/unit art asset is pre-sized to exactly this, so drawing them never needs runtime scaling. */
 export const CELL_SIZE = 64
 
 const TEAM_SPRITE_SRC: Record<UnitState['team'], string> = {
@@ -11,22 +15,17 @@ const TEAM_SPRITE_SRC: Record<UnitState['team'], string> = {
   enemy: enemySprite,
 }
 
-const FLOOR_A = '#1a1a19'
-const FLOOR_B = '#201f1d'
+/** Every image asset that must finish loading before the first paint is correct. */
+const ALL_SPRITE_SRCS = [playerSprite, enemySprite, tileSprite, coverSprite, wallSprite]
+
 const WALL_COLOR = '#4b4744'
-const WALL_HATCH = 'rgba(255, 255, 255, 0.18)'
-const WALL_BORDER = 'rgba(255, 255, 255, 0.25)'
-const COVER_HATCH = 'rgba(250, 204, 21, 0.28)'
-const COVER_BORDER = 'rgba(250, 204, 21, 0.4)'
 const GRIDLINE = 'rgba(255, 255, 255, 0.06)'
 const REACHABLE_FILL = 'rgba(12, 163, 12, 0.35)'
 const ATTACKABLE_FILL = 'rgba(230, 103, 103, 0.35)'
 const TECH_TARGET_FILL = 'rgba(144, 133, 233, 0.35)'
-const ATTACK_PREVIEW_DOT = 'rgba(230, 103, 103, 0.95)'
-const TECH_PREVIEW_DOT = 'rgba(144, 133, 233, 0.95)'
 const ACTIVE_RING = '#facc15'
-const RANGE_DIAMOND_STROKE = 'rgba(250, 204, 21, 0.45)'
-const INSPECT_RANGE_DIAMOND_STROKE = 'rgba(230, 103, 103, 0.55)'
+const RANGE_DIAMOND_STROKE = 'rgba(250, 204, 21, 0.9)'
+const INSPECT_RANGE_DIAMOND_STROKE = 'rgba(230, 103, 103, 0.9)'
 const INSPECT_THREAT_FILL = 'rgba(230, 140, 40, 0.28)'
 const HP_GOOD = '#0ca30c'
 const HP_WARNING = '#fab219'
@@ -53,9 +52,9 @@ function getSprite(src: string): HTMLImageElement {
   return img
 }
 
-/** Resolves once both team sprites have finished loading, so the caller can trigger a first correct paint. */
+/** Resolves once every tile/unit sprite has finished loading, so the caller can trigger a first correct paint. */
 export function preloadSprites(): Promise<void> {
-  const loads = Object.values(TEAM_SPRITE_SRC).map(
+  const loads = ALL_SPRITE_SRCS.map(
     (src) =>
       new Promise<void>((res) => {
         const img = getSprite(src)
@@ -64,6 +63,16 @@ export function preloadSprites(): Promise<void> {
       })
   )
   return Promise.all(loads).then(() => undefined)
+}
+
+/** Draws `img` centered on a tile at its native resolution — every asset is pre-sized to CELL_SIZE. */
+function drawSprite(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  cx: number,
+  cy: number
+): void {
+  ctx.drawImage(img, cx - img.naturalWidth / 2, cy - img.naturalHeight / 2)
 }
 
 export interface RenderOptions {
@@ -77,62 +86,39 @@ export interface RenderOptions {
   inspectedRangeDiamond?: { pos: Position; range: number }
   /** Tiles a hovered non-active unit could move to this activation. */
   inspectedReachable?: Position[]
-  /** Among an inspected unit's reachable tiles: which ones would let it attack or use a tech action from there. */
-  movePreview?: { attack: Position[]; tech: Position[] }
   /** Arrows from the active unit to each valid target for the currently hovered/armed action. */
   actionArrows?: { from: Position; to: Position; kind: ActionArrowKind }[]
   /** Draws this one unit at an interpolated position instead of its state position, for a moving-sprite animation. */
   movingUnit?: { id: string; pos: Position }
   /** In-flight projectiles (attack/invade), drawn as a small orb traveling from `from` to `to`. */
   projectiles?: { from: Position; to: Position; kind: ActionArrowKind; progress: number }[]
-}
-
-/** Impassable tiles get a diagonal hatch + border on top of the fill, so they read as an obstacle, not just a darker floor tile. */
-function drawWallHatch(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(x, y, CELL_SIZE, CELL_SIZE)
-  ctx.clip()
-  ctx.strokeStyle = WALL_HATCH
-  ctx.lineWidth = 2
-  for (let offset = -CELL_SIZE; offset < CELL_SIZE * 2; offset += 9) {
-    ctx.beginPath()
-    ctx.moveTo(x + offset, y)
-    ctx.lineTo(x + offset + CELL_SIZE, y + CELL_SIZE)
-    ctx.stroke()
-  }
-  ctx.restore()
-
-  ctx.strokeStyle = WALL_BORDER
-  ctx.lineWidth = 2
-  ctx.strokeRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2)
+  /**
+   * The active unit's move-speed footprint — cover tiles inside it get a shield icon and walls get
+   * a red cross, so a player deciding where to move can see at a glance which nearby obstacles
+   * (impassable or just penalizing) actually matter to this move.
+   */
+  moveRange?: { pos: Position; speed: number }
 }
 
 function isCoverTile(map: MapState, pos: Position): boolean {
   return map.cover.some((tile) => tile.x === pos.x && tile.y === pos.y)
 }
 
-/** Soft cover reads as a lighter, sparser hatch than a wall — passable, but still visually distinct terrain. */
-function drawCoverHatch(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+/**
+ * Big centered emoji used for movement-feedback icons (shield on cover, cross on walls). Explicit
+ * fill/shadow so it stays legible regardless of whatever translucent tile-fill color (reachable,
+ * attackable, etc.) was last set on the shared context, and over any tile art underneath.
+ */
+function drawBigEmoji(ctx: CanvasRenderingContext2D, emoji: string, cx: number, cy: number): void {
   ctx.save()
-  ctx.beginPath()
-  ctx.rect(x, y, CELL_SIZE, CELL_SIZE)
-  ctx.clip()
-  ctx.strokeStyle = COVER_HATCH
-  ctx.lineWidth = 2
-  for (let offset = -CELL_SIZE; offset < CELL_SIZE * 2; offset += 14) {
-    ctx.beginPath()
-    ctx.moveTo(x + offset, y + CELL_SIZE)
-    ctx.lineTo(x + offset + CELL_SIZE, y)
-    ctx.stroke()
-  }
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `${Math.round(CELL_SIZE * 0.55)}px system-ui, sans-serif`
+  ctx.fillStyle = '#ffffff'
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)'
+  ctx.shadowBlur = 6
+  ctx.fillText(emoji, cx, cy)
   ctx.restore()
-
-  ctx.strokeStyle = COVER_BORDER
-  ctx.lineWidth = 2
-  ctx.setLineDash([4, 3])
-  ctx.strokeRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4)
-  ctx.setLineDash([])
 }
 
 /** A colored arrow from one tile's center to another, pulled back from both ends so it doesn't bury itself under the sprites. */
@@ -221,9 +207,12 @@ const STATUS_EMOJI: Record<string, string> = {
   impaired: '🔥',
   shielded: '🛡️',
   braced: '🧱',
-  rattled: '😵',
   exposed: '☢️',
   lockedOn: '🎯',
+  extendedRange: '📡',
+  guarded: '🛡️',
+  boosted: '💨',
+  entrenched: '⛰️',
 }
 
 /** Small emoji badges stacked in the sprite's top-left corner for each active status + Overwatch. */
@@ -254,25 +243,7 @@ function hpBarColor(ratio: number): string {
   return HP_GOOD
 }
 
-/** Small dot centered in the tile; `slot` nudges it left/right so attack + tech dots can coexist on one tile. */
-function drawCenterDot(
-  ctx: CanvasRenderingContext2D,
-  pos: Position,
-  color: string,
-  slot: 0 | 1 = 0
-): void {
-  const cx = pos.x * CELL_SIZE + CELL_SIZE / 2 + (slot === 0 ? -8 : 8)
-  const cy = pos.y * CELL_SIZE + CELL_SIZE / 2
-
-  ctx.beginPath()
-  ctx.arc(cx, cy, 5, 0, Math.PI * 2)
-  ctx.fillStyle = color
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
-  ctx.lineWidth = 1
-  ctx.stroke()
-}
-
+/** Outlines the Chebyshev-distance range square (movement/weapon range allow diagonal steps). */
 function drawRangeDiamond(
   ctx: CanvasRenderingContext2D,
   pos: Position,
@@ -287,15 +258,9 @@ function drawRangeDiamond(
 
   ctx.save()
   ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  ctx.setLineDash([6, 4])
-  ctx.beginPath()
-  ctx.moveTo(cx + r, cy)
-  ctx.lineTo(cx, cy + r)
-  ctx.lineTo(cx - r, cy)
-  ctx.lineTo(cx, cy - r)
-  ctx.closePath()
-  ctx.stroke()
+  ctx.lineWidth = 3.5
+  ctx.setLineDash([9, 5])
+  ctx.strokeRect(cx - r, cy - r, r * 2, r * 2)
   ctx.restore()
 }
 
@@ -307,14 +272,28 @@ export function drawState(
   const { map, units } = state
   ctx.clearRect(0, 0, map.width * CELL_SIZE, map.height * CELL_SIZE)
 
+  const tile = getSprite(tileSprite)
+  const cover = getSprite(coverSprite)
+  const wall = getSprite(wallSprite)
+  const ready = (img: HTMLImageElement) => img.complete && img.naturalWidth > 0
+
   for (let y = 0; y < map.height; y++) {
     for (let x = 0; x < map.width; x++) {
       const pos = { x, y }
-      const wall = isWall(map, pos)
-      ctx.fillStyle = wall ? WALL_COLOR : (x + y) % 2 === 0 ? FLOOR_A : FLOOR_B
-      ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-      if (wall) drawWallHatch(ctx, x * CELL_SIZE, y * CELL_SIZE)
-      else if (isCoverTile(map, pos)) drawCoverHatch(ctx, x * CELL_SIZE, y * CELL_SIZE)
+      const cx = x * CELL_SIZE + CELL_SIZE / 2
+      const cy = y * CELL_SIZE + CELL_SIZE / 2
+
+      if (isWall(map, pos)) {
+        if (ready(wall)) drawSprite(ctx, wall, cx, cy)
+        else {
+          ctx.fillStyle = WALL_COLOR
+          ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        }
+        continue
+      }
+
+      const sprite = isCoverTile(map, pos) ? cover : tile
+      if (ready(sprite)) drawSprite(ctx, sprite, cx, cy)
     }
   }
 
@@ -354,6 +333,30 @@ export function drawState(
     ctx.stroke()
   }
 
+  if (options.moveRange) {
+    const { pos: rangePos, speed } = options.moveRange
+    for (const wallPos of map.walls) {
+      if (chebyshevDistance(rangePos, wallPos) <= speed) {
+        drawBigEmoji(
+          ctx,
+          '❌',
+          wallPos.x * CELL_SIZE + CELL_SIZE / 2,
+          wallPos.y * CELL_SIZE + CELL_SIZE / 2
+        )
+      }
+    }
+    for (const coverPos of map.cover) {
+      if (chebyshevDistance(rangePos, coverPos) <= speed) {
+        drawBigEmoji(
+          ctx,
+          '🛡️',
+          coverPos.x * CELL_SIZE + CELL_SIZE / 2,
+          coverPos.y * CELL_SIZE + CELL_SIZE / 2
+        )
+      }
+    }
+  }
+
   if (options.weaponRangeDiamond) {
     drawRangeDiamond(ctx, options.weaponRangeDiamond.pos, options.weaponRangeDiamond.range)
   }
@@ -367,28 +370,22 @@ export function drawState(
     )
   }
 
-  if (options.movePreview) {
-    for (const pos of options.movePreview.attack) {
-      drawCenterDot(ctx, pos, ATTACK_PREVIEW_DOT, 0)
-    }
-    for (const pos of options.movePreview.tech) {
-      drawCenterDot(ctx, pos, TECH_PREVIEW_DOT, 1)
-    }
-  }
-
   for (const unit of units) {
     if (!isAlive(unit)) continue
 
     const drawPos = unit.id === options.movingUnit?.id ? options.movingUnit.pos : unit.pos
     const cx = drawPos.x * CELL_SIZE + CELL_SIZE / 2
     const cy = drawPos.y * CELL_SIZE + CELL_SIZE / 2
-    const spriteSize = CELL_SIZE * 0.7
+    // The unit art fills the whole tile (it bakes in its own matching floor/shadow); the ring,
+    // status badges, name, and HP bar are placed relative to a smaller nominal size so they still
+    // read as an overlay around the mech rather than crowding the tile's edges.
+    const spriteSize = CELL_SIZE * 0.72
 
     ctx.save()
     if (unit.hasActivated) ctx.globalAlpha = 0.45
     const sprite = getSprite(TEAM_SPRITE_SRC[unit.team])
     if (sprite.complete && sprite.naturalWidth > 0) {
-      ctx.drawImage(sprite, cx - spriteSize / 2, cy - spriteSize / 2, spriteSize, spriteSize)
+      drawSprite(ctx, sprite, cx, cy)
     }
     ctx.restore()
 

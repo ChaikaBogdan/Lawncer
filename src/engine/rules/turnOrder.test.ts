@@ -11,6 +11,7 @@ function unit(id: string, team: UnitState['team']): UnitState {
     pos: { x: 0, y: 0 },
     moveSpeed: 3,
     hasActivated: false,
+    hasMoved: false,
     quickActionsUsed: 0,
     hp: 4,
     maxHp: 4,
@@ -22,10 +23,16 @@ function unit(id: string, team: UnitState['team']): UnitState {
     maxStress: 3,
     weapon: RIFLE,
     evasion: 8,
+    armor: 0,
+    aiBehavior: 'aggressive',
+    systemReactionStatus: 'extendedRange',
     statuses: [],
     overwatch: false,
+    systemReactionArmed: false,
+    systemReactionUses: 0,
     brace: false,
     overchargeCount: 0,
+    hasOvercharged: false,
     weaponDisabled: false,
   }
 }
@@ -87,9 +94,9 @@ describe('turn order', () => {
     expect(state.units.every((u) => !u.hasActivated)).toBe(true)
   })
 
-  it('clears an unused armed Brace and resets Overcharge count at round rollover', () => {
+  it('clears an unused armed Brace and resets the per-activation Overcharge flag at round rollover', () => {
     let state = baseState([
-      { ...unit('p1', 'player'), brace: true, overchargeCount: 2 },
+      { ...unit('p1', 'player'), brace: true, overchargeCount: 2, hasOvercharged: true },
       unit('e1', 'enemy'),
     ])
     state = {
@@ -101,6 +108,28 @@ describe('turn order', () => {
 
     const p1 = state.units.find((u) => u.id === 'p1')!
     expect(p1.brace).toBe(false)
-    expect(p1.overchargeCount).toBe(0)
+    expect(p1.hasOvercharged).toBe(false)
+    // The scene-wide escalation count is untouched by round rollover — only a fresh scenario
+    // (Reset scenario) zeroes it, so the heat cost keeps escalating across the whole battle.
+    expect(p1.overchargeCount).toBe(2)
+  })
+
+  it('resets the per-activation System Reaction flag but not its Limited-2 scenario-wide use count', () => {
+    let state = baseState([
+      { ...unit('p1', 'player'), systemReactionArmed: true, systemReactionUses: 1 },
+      unit('e1', 'enemy'),
+    ])
+    state = {
+      ...state,
+      units: state.units.map((u) => ({ ...u, hasActivated: true })),
+    }
+
+    state = advanceTurn(state)
+
+    const p1 = state.units.find((u) => u.id === 'p1')!
+    expect(p1.systemReactionArmed).toBe(false)
+    // Limited 2 is a per-scenario charge count, not a per-round cooldown — round rollover must not
+    // refill it, or Wraith's Boost (and every other frame's System Reaction) could be spammed.
+    expect(p1.systemReactionUses).toBe(1)
   })
 })

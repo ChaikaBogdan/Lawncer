@@ -8,21 +8,25 @@ import type {
   OverchargeAction,
   OverwatchAction,
   StabilizeAction,
+  SystemReactionAction,
   TechInvadeAction,
   TechShieldAction,
 } from '../actions/types.ts'
 import { coverBonus } from '../map/cover.ts'
-import { manhattanDistance, reachableTiles } from '../map/grid.ts'
+import { chebyshevDistance, knockbackDestination, reachableTiles } from '../map/grid.ts'
 import { hasLineOfSight } from '../map/lineOfSight.ts'
 import { ENGAGED_PENALTY, isEngaged } from '../rules/engagement.ts'
 import { advanceTurn } from '../rules/turnOrder.ts'
-import type { GameState, Position, UnitState } from '../state/types.ts'
+import type { GameState, MapState, Position, UnitState, Weapon } from '../state/types.ts'
 import {
   consumeBraceIfArmed,
   effectiveDamageAgainst,
+  effectiveMoveSpeed,
+  effectiveRange,
   hasStatus,
   isAlive,
   quickActionBudget,
+  systemReactionEvasionBonus,
   withStatus,
 } from '../state/unit.ts'
 import { applyDamage } from './damage.ts'
@@ -32,9 +36,13 @@ import { rollOverchargeHeat } from './overcharge.ts'
 import { rollStressTable } from './stressTable.ts'
 import { rollStructureTable } from './structureTable.ts'
 import { INVADE_HEAT, SHIELD_DURATION, TECH_RANGE } from './tech.ts'
+import { hasWeaponTag } from './weapons.ts'
 
-/** Accuracy penalty inflicted on an attacker whose last attack was halved by the target's Brace. */
-const RATTLED_PENALTY = 1
+/**
+ * Real rule: a Braced unit makes "all other attacks against you" harder by +1 difficulty until
+ * Braced wears off — a defense bonus for the unit that braced, not a penalty on whoever hit them.
+ */
+const BRACED_DEFENSE_BONUS = 1
 /** Accuracy bonus an attacker gets against a Locked On target — our first to-hit bonus rather than penalty. */
 const LOCK_ON_BONUS = 1
 
@@ -79,17 +87,19 @@ function requireReactionAvailable(unit: UnitState): void {
 }
 
 /**
- * Rattled (a Braced target's attacker, for the rest of that attacker's turn) penalizes attacks,
- * and Locked On (on the target) grants a bonus — both apply regardless of range. Cover and
- * Engaged only affect ranged attacks (weapon range > 1); melee ignores both per the real rules.
+ * A Braced target's defense bonus and Locked On's bonus (for the attacker) both apply regardless
+ * of range. Cover and Engaged only affect ranged attacks (threat > 1); melee ignores both per the
+ * real rules. Keyed off `threat`, not `range` — a weapon's attack distance and its melee/reach
+ * classification are separate concepts (see `Weapon.threat`).
  */
 function attackDifficulty(state: GameState, attacker: UnitState, target: UnitState): number {
-  const rattled = hasStatus(attacker, 'rattled') ? RATTLED_PENALTY : 0
+  const bracedDefense = hasStatus(target, 'braced') ? BRACED_DEFENSE_BONUS : 0
+  const systemReaction = systemReactionEvasionBonus(target)
   const lockOn = hasStatus(target, 'lockedOn') ? LOCK_ON_BONUS : 0
-  if (attacker.weapon.range <= 1) return rattled - lockOn
+  if (attacker.weapon.threat <= 1) return bracedDefense + systemReaction - lockOn
   const cover = coverBonus(state.map, attacker.pos, target.pos)
   const engaged = isEngaged(state, attacker) ? ENGAGED_PENALTY : 0
-  return rattled - lockOn + cover + engaged
+  return bracedDefense + systemReaction - lockOn + cover + engaged
 }
 
 /** Applies damage, then rolls the structure table if a box was lost and the unit survived. */
@@ -120,13 +130,19 @@ function heatAndRollStressTable(
   return { unit: heated, state }
 }
 
-/** A weapon attack roll: d20 meeting or beating the target's (modified) Evasion hits; a natural 20 also crits (double damage). */
+/**
+ * A weapon attack roll: d20 meeting or beating the target's (modified) Evasion hits, unless the
+ * weapon is Smart (always hits regardless of roll); a natural 20 also crits — double damage, or
+ * triple for an Overkill weapon.
+ */
 function rollAttack(state: GameState, attacker: UnitState, target: UnitState) {
   const { roll, state: rolledState } = rollD20(state)
   const evasion = target.evasion + attackDifficulty(state, attacker, target)
-  const hit = roll >= evasion
+  const hit = hasWeaponTag(attacker.weapon, 'smart') || roll >= evasion
   const crit = roll === 20
-  const damage = hit ? effectiveDamageAgainst(attacker, target) * (crit ? 2 : 1) : 0
+  const critMultiplier = crit ? (hasWeaponTag(attacker.weapon, 'overkill') ? 3 : 2) : 1
+  const rawDamage = effectiveDamageAgainst(attacker, target) * critMultiplier
+  const damage = hit ? Math.max(0, rawDamage - target.armor) : 0
   return {
     state: rolledState,
     result: {
@@ -142,22 +158,82 @@ function rollAttack(state: GameState, attacker: UnitState, target: UnitState) {
 }
 
 /**
+ * Knockback: on a landed hit against a target that survived it, shove the target one tile
+ * straight back along the attacker-target line — silently skipped if the destination is blocked
+ * (wall, occupied, or out of bounds).
+ */
+function applyKnockbackIfHit(
+  map: MapState,
+  units: UnitState[],
+  attackerWeapon: Weapon,
+  attackerPos: Position,
+  hit: boolean,
+  target: UnitState
+): UnitState {
+  if (!hit || !isAlive(target) || !hasWeaponTag(attackerWeapon, 'knockback')) return target
+  const dest = knockbackDestination(map, units, attackerPos, target.pos, target.id)
+  return dest ? { ...target, pos: dest } : target
+}
+
+/** Shared by Overwatch and System Reaction: did this watcher just see the mover start moving from within its threat? */
+function reactionTriggered(
+  state: GameState,
+  watcher: UnitState,
+  mover: UnitState,
+  fromPos: Position
+): boolean {
+  if (watcher.id === mover.id || !isAlive(watcher) || !isAlive(mover)) return false
+  if (watcher.team === mover.team) return false
+  if (chebyshevDistance(watcher.pos, fromPos) > watcher.weapon.threat) return false
+  return hasLineOfSight(state.map, watcher.pos, fromPos)
+}
+
+/**
+ * A watcher with System Reaction armed (an independent slot from Overwatch/Brace — see
+ * `UnitState.systemReactionArmed`) grants itself its frame's buff status instead of a reaction
+ * attack, then stands down. No attack roll, no heat — a pure self-buff.
+ */
+function applySystemReactionIfTriggered(
+  state: GameState,
+  watcher: UnitState,
+  moverId: string,
+  fromPos: Position
+): GameState {
+  const mover = state.units.find((u) => u.id === moverId)!
+  if (!watcher.systemReactionArmed || !reactionTriggered(state, watcher, mover, fromPos)) {
+    return state
+  }
+  const buffed = withStatus(
+    { ...watcher, systemReactionArmed: false },
+    watcher.systemReactionStatus,
+    1
+  )
+  return { ...state, units: state.units.map((u) => (u.id === watcher.id ? buffed : u)) }
+}
+
+/**
  * Any enemy of the mover that is currently on Overwatch and could already see/reach the mover's
  * *starting* position fires a free reaction attack, then stands down — this punishes repositioning
  * or retreating out of a threatened zone, not approaching into one (real rule: the reaction
  * triggers on a hostile starting movement from within your threat, not on them entering it).
+ * System Reaction (a separate, independent slot) checks the exact same trigger and can fire
+ * alongside Overwatch off the same move.
  */
 function applyOverwatchReactions(state: GameState, moverId: string, fromPos: Position): GameState {
   return state.units.reduce((current, watcherSnapshot) => {
-    const watcher = current.units.find((u) => u.id === watcherSnapshot.id)!
-    if (watcher.id === moverId || !watcher.overwatch || !isAlive(watcher)) return current
+    const withSystemReaction = applySystemReactionIfTriggered(
+      current,
+      current.units.find((u) => u.id === watcherSnapshot.id)!,
+      moverId,
+      fromPos
+    )
+    const watcher = withSystemReaction.units.find((u) => u.id === watcherSnapshot.id)!
+    const mover = withSystemReaction.units.find((u) => u.id === moverId)!
+    if (!watcher.overwatch || !reactionTriggered(withSystemReaction, watcher, mover, fromPos)) {
+      return withSystemReaction
+    }
 
-    const mover = current.units.find((u) => u.id === moverId)!
-    if (watcher.team === mover.team || !isAlive(mover)) return current
-    if (manhattanDistance(watcher.pos, fromPos) > watcher.weapon.range) return current
-    if (!hasLineOfSight(current.map, watcher.pos, fromPos)) return current
-
-    const { state: afterRoll, result } = rollAttack(current, watcher, mover)
+    const { state: afterRoll, result } = rollAttack(withSystemReaction, watcher, mover)
     const { unit: watcherAfterHeat, state: afterWatcherHeat } = heatAndRollStressTable(
       afterRoll,
       watcher,
@@ -165,14 +241,13 @@ function applyOverwatchReactions(state: GameState, moverId: string, fromPos: Pos
     )
 
     let currentState = afterWatcherHeat
-    let finalWatcher = { ...watcherAfterHeat, overwatch: false }
+    const finalWatcher = { ...watcherAfterHeat, overwatch: false }
     // Lock On is consumed by the next attack against the target, hit or miss.
     let moverUnit = currentState.units.find((u) => u.id === moverId)!
     moverUnit = { ...moverUnit, statuses: moverUnit.statuses.filter((s) => s.type !== 'lockedOn') }
 
     if (result.hit) {
       const { unit: braced, halved } = consumeBraceIfArmed(moverUnit)
-      if (halved) finalWatcher = withStatus(finalWatcher, 'rattled', 1)
       const dmg = halved ? Math.floor(result.damage / 2) : result.damage
       const { unit: damaged, state: afterDamage } = damageAndRollStructureTable(
         currentState,
@@ -181,6 +256,14 @@ function applyOverwatchReactions(state: GameState, moverId: string, fromPos: Pos
       )
       moverUnit = damaged
       currentState = afterDamage
+      moverUnit = applyKnockbackIfHit(
+        currentState.map,
+        currentState.units,
+        watcher.weapon,
+        watcher.pos,
+        result.hit,
+        moverUnit
+      )
     }
 
     const units = currentState.units.map((u) => {
@@ -193,16 +276,33 @@ function applyOverwatchReactions(state: GameState, moverId: string, fromPos: Pos
   }, state)
 }
 
+/**
+ * Move is a free action (matches tabletop) — capped at one hop per activation, not a quick action.
+ * A Braced unit skips its move entirely this activation (real rule: no actions of any type next
+ * turn besides the one allotted Quick Action).
+ */
 function resolveMove(state: GameState, action: MoveAction): GameState {
   const unit = requireActingUnit(state, action.unitId)
+  if (unit.hasMoved) {
+    throw new Error(`Unit ${unit.id} has already moved this activation`)
+  }
+  if (hasStatus(unit, 'braced')) {
+    throw new Error(`Unit ${unit.id} is Braced and cannot move this activation`)
+  }
 
-  const reachable = reachableTiles(state.map, state.units, unit.pos, unit.moveSpeed, unit.id)
+  const reachable = reachableTiles(
+    state.map,
+    state.units,
+    unit.pos,
+    effectiveMoveSpeed(unit),
+    unit.id
+  )
   if (!reachable.some((pos) => pos.x === action.to.x && pos.y === action.to.y)) {
     throw new Error(`Destination (${action.to.x}, ${action.to.y}) is not reachable`)
   }
 
   const movedUnits = state.units.map((u) =>
-    u.id === unit.id ? { ...u, pos: action.to, quickActionsUsed: u.quickActionsUsed + 1 } : u
+    u.id === unit.id ? { ...u, pos: action.to, hasMoved: true } : u
   )
   const reacted = applyOverwatchReactions({ ...state, units: movedUnits }, unit.id, unit.pos)
 
@@ -219,7 +319,7 @@ function resolveAttack(state: GameState, action: AttackAction): GameState {
   if (!target) throw new Error(`Unknown target: ${action.targetId}`)
   if (target.team === unit.team) throw new Error('Cannot attack your own team')
   if (!isAlive(target)) throw new Error(`Target ${target.id} is already destroyed`)
-  if (manhattanDistance(unit.pos, target.pos) > unit.weapon.range) {
+  if (chebyshevDistance(unit.pos, target.pos) > effectiveRange(unit)) {
     throw new Error(`Target ${target.id} is out of weapon range`)
   }
   if (!hasLineOfSight(state.map, unit.pos, target.pos)) {
@@ -235,14 +335,13 @@ function resolveAttack(state: GameState, action: AttackAction): GameState {
   )
 
   let currentState = afterAttackerHeat
-  let finalAttacker = attackerAfterHeat
+  const finalAttacker = attackerAfterHeat
   // Lock On is consumed by the next attack against the target, hit or miss.
   let targetUnit = currentState.units.find((u) => u.id === target.id)!
   targetUnit = { ...targetUnit, statuses: targetUnit.statuses.filter((s) => s.type !== 'lockedOn') }
 
   if (result.hit) {
     const { unit: braced, halved } = consumeBraceIfArmed(targetUnit)
-    if (halved) finalAttacker = withStatus(finalAttacker, 'rattled', 1)
     const dmg = halved ? Math.floor(result.damage / 2) : result.damage
     const { unit: damaged, state: afterDamage } = damageAndRollStructureTable(
       currentState,
@@ -251,6 +350,14 @@ function resolveAttack(state: GameState, action: AttackAction): GameState {
     )
     targetUnit = damaged
     currentState = afterDamage
+    targetUnit = applyKnockbackIfHit(
+      currentState.map,
+      currentState.units,
+      unit.weapon,
+      unit.pos,
+      result.hit,
+      targetUnit
+    )
   }
 
   const units = currentState.units.map((u) => {
@@ -266,7 +373,7 @@ function requireTechTarget(state: GameState, unit: UnitState, targetId: string):
   const target = state.units.find((u) => u.id === targetId)
   if (!target) throw new Error(`Unknown target: ${targetId}`)
   if (!isAlive(target)) throw new Error(`Target ${target.id} is already destroyed`)
-  if (manhattanDistance(unit.pos, target.pos) > TECH_RANGE) {
+  if (chebyshevDistance(unit.pos, target.pos) > TECH_RANGE) {
     throw new Error(`Target ${target.id} is out of tech range`)
   }
   if (!hasLineOfSight(state.map, unit.pos, target.pos)) {
@@ -275,30 +382,57 @@ function requireTechTarget(state: GameState, unit: UnitState, targetId: string):
   return target
 }
 
+/**
+ * Invade rolls like an attack — a d20 vs. the target's plain Evasion — but skips the
+ * cover/Engaged/Braced-defense/Lock-On modifiers `attackDifficulty` applies to physical attacks,
+ * since it's a systems intrusion rather than a shot that can be blocked or thrown off by
+ * positioning. Never crits: real LANCER tech attacks can't critically hit at all (only ranged and
+ * melee attack rolls can), so a natural 20 here is just a guaranteed hit for flat `INVADE_HEAT`.
+ */
 function resolveTechInvade(state: GameState, action: TechInvadeAction): GameState {
   const unit = requireActingUnit(state, action.unitId)
   const target = requireTechTarget(state, unit, action.targetId)
   if (target.team === unit.team) throw new Error('Cannot invade your own team')
 
-  const targetBefore = state.units.find((u) => u.id === target.id)!
-  const { unit: bracedTarget, halved } = consumeBraceIfArmed(targetBefore)
-  const heatAmount = halved ? Math.floor(INVADE_HEAT / 2) : INVADE_HEAT
-  const { unit: heatedTarget, state: afterHeat } = heatAndRollStressTable(
-    state,
-    bracedTarget,
-    heatAmount
-  )
+  const { roll, state: rolledState } = rollD20(state)
+  const hit = roll >= target.evasion
+  const result = {
+    attackerId: unit.id,
+    targetId: target.id,
+    roll,
+    evasion: target.evasion,
+    hit,
+    crit: false,
+    damage: 0,
+  }
 
-  const units = afterHeat.units.map((u) => {
-    if (u.id === unit.id) {
-      const withQa = { ...u, quickActionsUsed: u.quickActionsUsed + 1 }
-      return halved ? withStatus(withQa, 'rattled', 1) : withQa
-    }
-    if (u.id === target.id) return heatedTarget
+  let currentState = rolledState
+  const finalAttacker = { ...unit, quickActionsUsed: unit.quickActionsUsed + 1 }
+  // Invade doesn't clear Lock On: it skips attackDifficulty entirely (see the doc comment above)
+  // so it never benefits from the bonus in the first place — burning a mark it doesn't use would
+  // deny it to whichever ally's actual Attack could still capitalize on it.
+  let targetUnit = currentState.units.find((u) => u.id === target.id)!
+
+  if (hit) {
+    const { unit: braced, halved } = consumeBraceIfArmed(targetUnit)
+    const heatAmount = halved ? Math.floor(INVADE_HEAT / 2) : INVADE_HEAT
+    const { unit: heated, state: afterHeat } = heatAndRollStressTable(
+      currentState,
+      braced,
+      heatAmount
+    )
+    targetUnit = heated
+    currentState = afterHeat
+    result.damage = heatAmount
+  }
+
+  const units = currentState.units.map((u) => {
+    if (u.id === unit.id) return finalAttacker
+    if (u.id === target.id) return targetUnit
     return u
   })
 
-  return finishQuickAction(afterHeat, units, unit.id)
+  return finishQuickAction({ ...currentState, units, lastAttack: result }, units, unit.id)
 }
 
 function resolveTechShield(state: GameState, action: TechShieldAction): GameState {
@@ -341,13 +475,52 @@ function resolveOverwatch(state: GameState, action: OverwatchAction): GameState 
   return finishQuickAction(state, units, unit.id)
 }
 
-/** Free (no quick-action cost) reactor push: grants +1 quick action this activation at an escalating heat cost. */
+/**
+ * Arms a unit's frame-specific System Reaction — a second, independent reaction slot that doesn't
+ * share Overwatch/Brace's one-at-a-time cap (see UnitState.systemReactionArmed), so no
+ * requireReactionAvailable guard here. Limited 2 per scenario (real LANCER's convention for a
+ * system-granted bonus reaction — a fixed charge count, not a per-round cooldown), tracked via
+ * `systemReactionUses`, which persists across rounds same as Overcharge's own scene-wide counter.
+ */
+export const SYSTEM_REACTION_CHARGES = 2
+
+function resolveSystemReaction(state: GameState, action: SystemReactionAction): GameState {
+  const unit = requireActingUnit(state, action.unitId)
+  if (unit.systemReactionArmed) {
+    throw new Error(`Unit ${unit.id} already has its System Reaction armed`)
+  }
+  if (unit.systemReactionUses >= SYSTEM_REACTION_CHARGES) {
+    throw new Error(`Unit ${unit.id} has no System Reaction charges left this scenario`)
+  }
+  const units = state.units.map((u) =>
+    u.id === unit.id
+      ? {
+          ...u,
+          systemReactionArmed: true,
+          systemReactionUses: u.systemReactionUses + 1,
+          quickActionsUsed: u.quickActionsUsed + 1,
+        }
+      : u
+  )
+  return finishQuickAction(state, units, unit.id)
+}
+
+/**
+ * Free (no quick-action cost) reactor push: grants +1 quick action this activation only, once per
+ * activation, at a heat cost that escalates the more times it's been used this whole scenario.
+ */
 function resolveOvercharge(state: GameState, action: OverchargeAction): GameState {
   const unit = requireActingUnit(state, action.unitId)
+  if (unit.hasOvercharged) {
+    throw new Error(`Unit ${unit.id} has already overcharged this activation`)
+  }
+  if (hasStatus(unit, 'braced')) {
+    throw new Error(`Unit ${unit.id} is Braced and cannot Overcharge this activation`)
+  }
   const { amount, state: afterRoll } = rollOverchargeHeat(state, unit.overchargeCount)
   const { unit: heated, state: afterHeat } = heatAndRollStressTable(
     afterRoll,
-    { ...unit, overchargeCount: unit.overchargeCount + 1 },
+    { ...unit, overchargeCount: unit.overchargeCount + 1, hasOvercharged: true },
     amount
   )
   const units = afterHeat.units.map((u) => (u.id === unit.id ? heated : u))
@@ -416,6 +589,8 @@ export function resolve(state: GameState, action: Action): GameState {
       return resolveLockOn(state, action)
     case 'overwatch':
       return resolveOverwatch(state, action)
+    case 'systemReaction':
+      return resolveSystemReaction(state, action)
     case 'overcharge':
       return resolveOvercharge(state, action)
     case 'brace':
