@@ -47,7 +47,7 @@ body {
 .game-shell {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 12px;
 }
 
 .battlefield-column {
@@ -55,20 +55,17 @@ body {
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  width: 514px;
+  /* Sized in JS (game.ts) to match the canvas's actual pixel width — see .battlefield-stage. */
   box-sizing: border-box;
 }
 
 .battlefield-stage {
   position: relative;
-  width: 514px;
-  height: 514px;
+  /* Sized in JS (game.ts) to match the canvas's actual pixel dimensions, which scale with the map. */
 }
 
 .battle-grid {
   display: block;
-  width: 512px;
-  height: 512px;
   border-radius: 8px;
   border: 1px solid var(--border);
   cursor: pointer;
@@ -190,79 +187,19 @@ body {
   background: rgba(230, 140, 40, 0.6);
 }
 
-.legend-swatch-wall {
-  background: #3a3937;
-  background-image: repeating-linear-gradient(
-    45deg,
-    rgba(255, 255, 255, 0.25) 0,
-    rgba(255, 255, 255, 0.25) 1px,
-    transparent 1px,
-    transparent 4px
-  );
-  border: 1px solid var(--border);
-}
-
-.legend-swatch-cover {
-  background: rgba(250, 204, 21, 0.15);
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgba(250, 204, 21, 0.4) 0,
-    rgba(250, 204, 21, 0.4) 1px,
-    transparent 1px,
-    transparent 5px
-  );
-  border: 1px dashed rgba(250, 204, 21, 0.5);
-}
-
-.legend-dot-attack,
-.legend-dot-tech,
 .legend-dot-range {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-}
-
-.legend-dot-attack {
-  background: rgba(230, 103, 103, 0.95);
-}
-
-.legend-dot-tech {
-  background: rgba(144, 133, 233, 0.95);
-}
-
-.legend-dot-range {
-  border-radius: 0;
   background: none;
   border: 2px dashed rgba(250, 204, 21, 0.8);
 }
 
-.legend-arrow-attack,
-.legend-arrow-invade,
-.legend-arrow-shield {
-  width: 0;
-  height: 0;
-  border-radius: 0;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 8px solid;
-}
-
-.legend-arrow-attack {
-  border-left-color: #e66767;
-}
-
-.legend-arrow-invade {
-  border-left-color: #9085e9;
-}
-
-.legend-arrow-shield {
-  border-left-color: #3987e5;
-}
-
 .controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
+  width: 200px;
+  flex-shrink: 0;
 }
 
 .controls button {
@@ -273,7 +210,10 @@ body {
   background: var(--surface-card);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 7px 14px;
+  padding: 9px 14px;
+  width: 100%;
+  text-align: left;
+  box-sizing: border-box;
   cursor: pointer;
   transition:
     border-color 0.15s,
@@ -295,10 +235,10 @@ body {
 }
 
 .controls .divider {
-  width: 1px;
-  align-self: stretch;
+  height: 1px;
+  width: 100%;
   background: var(--border);
-  margin: 0 2px;
+  margin: 2px 0;
 }
 
 /* --- Roster --- */
@@ -373,9 +313,48 @@ body {
   color: var(--text-primary);
 }
 
-.unit-weapon {
+.unit-weapon-block {
+  background: var(--surface-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  margin-bottom: 6px;
+}
+
+.unit-weapon-name {
   font-size: 10px;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+
+.unit-weapon-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--tech-accent);
+}
+
+.weapon-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.tag-badge {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tech-accent);
+  border: 1px solid var(--tech-accent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: default;
 }
 
 .unit-combat-stats {
@@ -386,7 +365,7 @@ body {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--tech-accent);
+  color: var(--text-secondary);
 }
 
 .stat-row {
@@ -486,10 +465,6 @@ body {
   background: var(--status-good);
 }
 
-.badge.rattled {
-  background: var(--status-warning);
-}
-
 .badge.exposed {
   background: var(--status-critical);
 }
@@ -498,11 +473,17 @@ body {
   background: var(--tech-accent);
 }
 
+.badge.extendedRange,
+.badge.guarded,
+.badge.boosted,
+.badge.entrenched {
+  background: var(--status-good);
+}
+
 /* --- Combat log --- */
 
 .combat-log {
-  width: 710px;
-  max-width: 100%;
+  width: 100%;
   height: 160px;
   overflow-y: auto;
   box-sizing: border-box;
@@ -532,51 +513,79 @@ body {
   }
 }
 
-/* --- Tutorial overlay --- */
+/* --- Overlay cards (shared by the tutorial and contextual hints) --- */
 
-.tutorial-overlay {
+.overlay-stack {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 300px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  z-index: 200;
+  /* Only the cards themselves should catch clicks — the gaps between them (and empty stack
+     space before/after cards exist) must let clicks on the battlefield underneath through. */
+  pointer-events: none;
+}
+
+.overlay-card {
+  position: relative;
+  pointer-events: auto;
   background: var(--surface-panel);
   border: 1px solid var(--tech-accent);
   border-radius: 10px;
-  padding: 16px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  z-index: 100;
+  padding: 16px 40px 16px 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
 }
 
-.tutorial-overlay h3 {
-  margin: 0;
+.overlay-card h4 {
+  margin: 0 0 6px;
   font-size: 14px;
   color: var(--tech-accent);
 }
 
-.tutorial-overlay p {
+.overlay-card p {
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-secondary);
 }
 
-.tutorial-hint {
+.overlay-card-hint {
+  margin-top: 6px !important;
   font-size: 11px;
   font-style: italic;
   color: var(--text-muted);
 }
 
-.tutorial-footer {
+.overlay-card-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 8px;
+}
+
+.overlay-card-close:hover {
+  color: var(--text-primary);
+}
+
+.overlay-card-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 4px;
+  margin-top: 10px;
 }
 
-.tutorial-footer button {
+.overlay-card-footer button {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -587,7 +596,7 @@ body {
   color: var(--text-primary);
 }
 
-.tutorial-skip {
+.overlay-card-secondary {
   background: none !important;
   border: none !important;
   color: var(--text-muted) !important;
@@ -609,60 +618,19 @@ body {
   border-color: var(--tech-accent) !important;
 }
 
-/* --- Contextual hints --- */
+/* --- Hover tooltip (shared by roster cards, action buttons, and canvas-hovered units) --- */
 
-.hint-stack {
+.tooltip {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 300px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 200;
-  /* Only the cards themselves should catch clicks — the gaps between them (and empty stack
-     space before/after cards exist) must let clicks on the battlefield underneath through. */
+  z-index: 300;
+  max-width: 280px;
   pointer-events: none;
-}
-
-.hint-card {
-  position: relative;
-  pointer-events: auto;
   background: var(--surface-panel);
   border: 1px solid var(--tech-accent);
-  border-radius: 10px;
-  padding: 12px 28px 12px 14px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-}
-
-.hint-card h4 {
-  margin: 0 0 4px;
-  font-size: 12px;
-  color: var(--tech-accent);
-}
-
-.hint-card p {
-  margin: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
-}
-
-.hint-card-close {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  padding: 4px;
-}
-
-.hint-card-close:hover {
-  color: var(--text-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }

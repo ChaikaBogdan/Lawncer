@@ -37,6 +37,16 @@ export interface OverwatchAction {
   unitId: string
 }
 
+/**
+ * Arms a second, independent reaction slot (doesn't share Overwatch/Brace's one-at-a-time cap):
+ * the next enemy that starts moving from within this unit's weapon threat grants the unit its own
+ * frame-specific buff (see Frame.systemReactionStatus) instead of a reaction attack.
+ */
+export interface SystemReactionAction {
+  type: 'systemReaction'
+  unitId: string
+}
+
 /** Pushes the reactor for a free extra quick action this activation, at an escalating heat cost. */
 export interface OverchargeAction {
   type: 'overcharge'
@@ -69,6 +79,7 @@ export type Action =
   | TechInvadeAction
   | TechShieldAction
   | OverwatchAction
+  | SystemReactionAction
   | OverchargeAction
   | BraceAction
   | StabilizeAction

@@ -1,5 +1,6 @@
 import type { ActionLog } from '../engine/state/log.ts'
 import type { GameState } from '../engine/state/types.ts'
+import { createOverlayCard, createOverlayStack } from './overlayCard.ts'
 
 interface InfoStep {
   kind: 'info'
@@ -28,9 +29,8 @@ const STEPS: TutorialStep[] = [
   {
     kind: 'gated',
     title: 'Move Everest',
-    body: "Click a green-highlighted tile to move. Hover any action button to preview its range as a dashed diamond, then hover a highlighted target on the map to see the arrow you'd fire. Hover any other unit (ally or enemy) anytime to see its range: orange tiles it could move to, a red dashed diamond for its weapon range, and dots marking where it could attack (red) or use tech (violet) from.",
-    isSatisfied: (state) =>
-      (state.units.find((u) => u.id === 'player-1')?.quickActionsUsed ?? 0) > 0,
+    body: "Click a green-highlighted tile to move. Hover any action button to preview its range as a dashed diamond, then hover a highlighted target on the map to see the arrow you'd fire. Hover any other unit (ally or enemy) anytime to see its range: orange tiles it could move to and a red dashed diamond for its weapon range.",
+    isSatisfied: (state) => state.units.find((u) => u.id === 'player-1')?.hasMoved ?? false,
   },
   {
     kind: 'gated',
@@ -52,12 +52,17 @@ const STEPS: TutorialStep[] = [
   {
     kind: 'info',
     title: 'Tech Actions',
-    body: '"Invade" floods an enemy’s systems with heat instead of damage. "Shield" grants an ally (or yourself) reduced incoming damage. Both have a fixed range of 3, independent of your weapon.',
+    body: '"Invade" rolls a d20 against the target’s Evasion, just like an attack, but a hit floods their systems with heat instead of dealing damage. "Shield" grants an ally (or yourself) reduced incoming damage. Both have a fixed range of 3, independent of your weapon.',
   },
   {
     kind: 'info',
     title: 'Overwatch',
     body: 'Arm Overwatch to spend a quick action watching your weapon’s range. If an enemy moves into it before your next turn, you get a free reaction attack.',
+  },
+  {
+    kind: 'info',
+    title: 'System Reaction',
+    body: 'Each mech also has its own frame-specific reaction — a self-buff instead of a shot, armed and triggered the same way as Overwatch, but on a separate slot so you can hold both at once. Limited to 2 uses per battle, not once per round.',
   },
   {
     kind: 'info',
@@ -86,28 +91,8 @@ export function mountTutorial(
   let stepIndex = 0
   let visible = typeof localStorage !== 'undefined' && localStorage.getItem(STORAGE_KEY) !== 'true'
 
-  const overlay = document.createElement('div')
-  overlay.className = 'tutorial-overlay'
-
-  const title = document.createElement('h3')
-  const body = document.createElement('p')
-  const hint = document.createElement('p')
-  hint.className = 'tutorial-hint'
-
-  const nextButton = document.createElement('button')
-  nextButton.type = 'button'
-
-  const skipButton = document.createElement('button')
-  skipButton.type = 'button'
-  skipButton.textContent = 'Skip tutorial'
-  skipButton.className = 'tutorial-skip'
-
-  const footer = document.createElement('div')
-  footer.className = 'tutorial-footer'
-  footer.append(skipButton, nextButton)
-
-  overlay.append(title, body, hint, footer)
-  root.append(overlay)
+  const stack = createOverlayStack(root)
+  let card: HTMLElement | undefined
 
   const clearHighlight = () => {
     document
@@ -116,36 +101,37 @@ export function mountTutorial(
   }
 
   const render = () => {
-    overlay.style.display = visible ? 'flex' : 'none'
+    stack.style.display = visible ? 'flex' : 'none'
+    card?.remove()
+    card = undefined
+    clearHighlight()
     if (!visible) return
 
     const step = STEPS[stepIndex]
-    title.textContent = step.title
-    body.textContent = step.body
-    clearHighlight()
+    card = createOverlayCard(step.title, step.body, {
+      hint: step.kind === 'gated' ? 'Waiting for you to do this in the game…' : undefined,
+      onClose: finish,
+      secondary: { label: 'Skip tutorial', onClick: finish },
+      primary:
+        step.kind === 'gated'
+          ? undefined
+          : { label: stepIndex === STEPS.length - 1 ? 'Got it' : 'Next', onClick: advance },
+    })
+    stack.append(card)
 
-    if (step.kind === 'gated') {
-      hint.textContent = 'Waiting for you to do this in the game…'
-      nextButton.style.display = 'none'
-      if (step.highlightSelector) {
-        document.querySelector(step.highlightSelector)?.classList.add('tutorial-target')
-      }
-    } else {
-      hint.textContent = ''
-      nextButton.style.display = ''
-      nextButton.textContent = stepIndex === STEPS.length - 1 ? 'Got it' : 'Next'
+    if (step.kind === 'gated' && step.highlightSelector) {
+      document.querySelector(step.highlightSelector)?.classList.add('tutorial-target')
     }
   }
 
-  const finish = () => {
+  function finish() {
     visible = false
     localStorage.setItem(STORAGE_KEY, 'true')
-    clearHighlight()
     render()
     onVisibilityChange?.(false)
   }
 
-  const advance = () => {
+  function advance() {
     if (stepIndex >= STEPS.length - 1) {
       finish()
       return
@@ -153,9 +139,6 @@ export function mountTutorial(
     stepIndex += 1
     render()
   }
-
-  nextButton.addEventListener('click', advance)
-  skipButton.addEventListener('click', finish)
 
   render()
 

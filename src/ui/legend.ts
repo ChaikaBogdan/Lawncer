@@ -3,22 +3,18 @@ interface LegendItem {
   label: string
 }
 
+// Wall/cover tiles are visually self-explanatory now that they use real art (crate/crater), and
+// the attack/invade/shield target arrows are already taught by the tutorial and discoverable by
+// hovering — trimmed to just the abstract overlay colors that aren't obvious at a glance.
 const TILE_ITEMS: LegendItem[] = [
   { swatch: 'legend-swatch-reachable', label: 'Move' },
   { swatch: 'legend-swatch-attackable', label: 'Attack' },
   { swatch: 'legend-swatch-tech', label: 'Tech target' },
-  { swatch: 'legend-swatch-wall', label: 'Impassable' },
-  { swatch: 'legend-swatch-cover', label: 'Cover (harder to hit at range)' },
   { swatch: 'legend-swatch-enemy-threat', label: 'Unit can move here (hover any other unit)' },
 ]
 
 const DOT_ITEMS: LegendItem[] = [
-  { swatch: 'legend-dot-attack', label: 'Can attack from here' },
-  { swatch: 'legend-dot-tech', label: 'Can use tech from here' },
   { swatch: 'legend-dot-range', label: 'Ability/threat range (hover a button or unit)' },
-  { swatch: 'legend-arrow-attack', label: 'Attack target (hover it on the map)' },
-  { swatch: 'legend-arrow-invade', label: 'Invade target (hover it on the map)' },
-  { swatch: 'legend-arrow-shield', label: 'Shield target (hover it on the map)' },
 ]
 
 function renderGroup(items: LegendItem[]): string {

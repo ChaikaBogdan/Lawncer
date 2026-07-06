@@ -62,8 +62,12 @@ export function findUnit(state: DebugState, id: string): DebugUnit {
   return unit
 }
 
-export function manhattan(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+/** Matches the engine's actual range metric (see src/engine/map/grid.ts's chebyshevDistance). */
+export function chebyshevDistance(
+  a: { x: number; y: number },
+  b: { x: number; y: number }
+): number {
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y))
 }
 
 /**

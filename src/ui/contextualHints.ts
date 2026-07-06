@@ -1,5 +1,6 @@
 import type { Action } from '../engine/actions/types.ts'
 import type { GameState, StatusType } from '../engine/state/types.ts'
+import { createOverlayCard, createOverlayStack } from './overlayCard.ts'
 
 interface HintDefinition {
   id: string
@@ -34,7 +35,7 @@ const HINTS: HintDefinition[] = [
   {
     id: 'invade',
     title: 'Invade',
-    body: "Invade always lands within tech range — no roll needed. It floods the target's systems with heat instead of dealing damage.",
+    body: "Invade rolls a d20 against the target's Evasion, just like an attack — but a hit floods their systems with heat instead of dealing damage.",
     trigger: ofType('techInvade'),
   },
   {
@@ -50,15 +51,21 @@ const HINTS: HintDefinition[] = [
     trigger: ofType('overwatch'),
   },
   {
+    id: 'systemReaction',
+    title: 'System Reaction',
+    body: "A second, independent reaction — doesn't share Overwatch/Brace's one-at-a-time slot. Each frame's is different: instead of a shot, it buffs the frame's signature stat for its next activation when an enemy starts moving from within your threat. Limited 2 — only 2 charges for the whole battle, not once per round.",
+    trigger: ofType('systemReaction'),
+  },
+  {
     id: 'overcharge',
     title: 'Overcharge',
-    body: 'A free extra quick action this turn, paid for in heat. The cost escalates the more times you use it in the same activation.',
+    body: 'A free extra quick action this turn, paid for in heat. Only once per activation — the cost escalates the more times you use it across the whole battle.',
     trigger: ofType('overcharge'),
   },
   {
     id: 'brace',
     title: 'Brace',
-    body: 'Halves the next hit or Invade against you. Only one reaction (Overwatch or Brace) can be armed at a time, and Brace limits your next turn to a single quick action.',
+    body: 'Halves the next hit or Invade against you, but locks out your next activation almost entirely: no move, no Overcharge, no reactions, and only 1 quick action.',
     trigger: ofType('brace'),
   },
   {
@@ -94,14 +101,32 @@ const HINTS: HintDefinition[] = [
   {
     id: 'status-braced',
     title: 'Braced',
-    body: "This unit used Brace and took a halved hit — it's down to 1 quick action next activation, and can't arm another reaction until then.",
+    body: 'This unit used Brace and took a halved hit. Anyone attacking it is at +1 difficulty until Braced wears off, but its own next activation is locked down: no move, no Overcharge, no reactions, and only 1 quick action.',
     trigger: (before, _action, after) => newlyGainedStatus(before, after, 'braced'),
   },
   {
-    id: 'status-rattled',
-    title: 'Rattled',
-    body: "This unit's attacks are penalized for the rest of its turn — its target Braced against it.",
-    trigger: (before, _action, after) => newlyGainedStatus(before, after, 'rattled'),
+    id: 'status-extendedRange',
+    title: 'Extend Range',
+    body: "Everest's System Reaction just fired — +1 weapon range for its next activation.",
+    trigger: (before, _action, after) => newlyGainedStatus(before, after, 'extendedRange'),
+  },
+  {
+    id: 'status-guarded',
+    title: 'Guard',
+    body: "Barbarossa's System Reaction just fired — +1 Evasion for its next activation.",
+    trigger: (before, _action, after) => newlyGainedStatus(before, after, 'guarded'),
+  },
+  {
+    id: 'status-boosted',
+    title: 'Boost',
+    body: "Wraith's System Reaction just fired — +1 move speed for its next activation.",
+    trigger: (before, _action, after) => newlyGainedStatus(before, after, 'boosted'),
+  },
+  {
+    id: 'status-entrenched',
+    title: 'Entrench',
+    body: "Sentinel's System Reaction just fired — +2 Evasion for its next activation (matches hard cover).",
+    trigger: (before, _action, after) => newlyGainedStatus(before, after, 'entrenched'),
   },
   {
     id: 'status-exposed',
@@ -171,9 +196,7 @@ export function mountContextualHints(root: HTMLElement): ContextualHintsControll
   let paused = false
   let pending: { id: string; title: string; body: string }[] = []
 
-  const stack = document.createElement('div')
-  stack.className = 'hint-stack'
-  root.append(stack)
+  const stack = createOverlayStack(root)
 
   function persist() {
     if (typeof localStorage === 'undefined') return
@@ -181,23 +204,7 @@ export function mountContextualHints(root: HTMLElement): ContextualHintsControll
   }
 
   function show(hint: { id: string; title: string; body: string }) {
-    const card = document.createElement('div')
-    card.className = 'hint-card'
-
-    const closeButton = document.createElement('button')
-    closeButton.type = 'button'
-    closeButton.className = 'hint-card-close'
-    closeButton.textContent = '×'
-    closeButton.setAttribute('aria-label', 'Dismiss')
-    closeButton.addEventListener('click', () => card.remove())
-
-    const title = document.createElement('h4')
-    title.textContent = hint.title
-
-    const body = document.createElement('p')
-    body.textContent = hint.body
-
-    card.append(closeButton, title, body)
+    const card = createOverlayCard(hint.title, hint.body, { onClose: () => card.remove() })
     stack.append(card)
   }
 

@@ -1,4 +1,4 @@
-import { manhattanDistance } from '../map/grid.ts'
+import { chebyshevDistance } from '../map/grid.ts'
 import type { GameState, UnitState } from '../state/types.ts'
 import { isAlive } from '../state/unit.ts'
 
@@ -16,6 +16,6 @@ export const ENGAGED_PENALTY = 1
 export function isEngaged(state: GameState, unit: UnitState): boolean {
   return state.units.some(
     (other) =>
-      other.team !== unit.team && isAlive(other) && manhattanDistance(unit.pos, other.pos) === 1
+      other.team !== unit.team && isAlive(other) && chebyshevDistance(unit.pos, other.pos) === 1
   )
 }

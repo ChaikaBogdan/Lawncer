@@ -1,19 +1,20 @@
 import { expect, test } from '@playwright/test'
-import { clickCell, findUnit, getState, manhattan, passUntil } from './helpers.ts'
+import { chebyshevDistance, clickCell, findUnit, getState } from './helpers.ts'
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.waitForSelector('canvas.battle-grid')
 })
 
-test('moving a unit updates its position and consumes a quick action', async ({ page }) => {
+test('a free move updates position without spending a quick action', async ({ page }) => {
   await clickCell(page, 1, 3)
 
   const state = await getState(page)
   const everest = findUnit(state, 'player-1')
   expect(everest.pos).toEqual({ x: 1, y: 3 })
-  expect(everest.quickActionsUsed).toBe(1)
-  await expect(page.locator('.battle-status')).toContainText('1 quick action')
+  expect(everest.quickActionsUsed).toBe(0)
+  await expect(page.locator('.battle-status')).toContainText('2 quick actions')
+  await expect(page.locator('.battle-status')).toContainText('move used')
 })
 
 test('clicking an unreachable tile is a no-op', async ({ page }) => {
@@ -25,9 +26,20 @@ test('clicking an unreachable tile is a no-op', async ({ page }) => {
   expect(everest.quickActionsUsed).toBe(0)
 })
 
-test('spending both quick actions hands the turn to the enemy team', async ({ page }) => {
+test('a second move in the same activation is a no-op', async ({ page }) => {
   await clickCell(page, 1, 3)
-  await clickCell(page, 0, 3)
+  await clickCell(page, 1, 0) // would otherwise be reachable from (1,3)
+
+  const state = await getState(page)
+  const everest = findUnit(state, 'player-1')
+  expect(everest.pos).toEqual({ x: 1, y: 3 })
+})
+
+test('spending both quick actions hands the turn to the enemy team', async ({ page }) => {
+  await page.click('button:has-text("Shield")')
+  await clickCell(page, 1, 6) // Everest's own tile
+  await page.click('button:has-text("Shield")')
+  await clickCell(page, 3, 6) // Barbarossa's tile
 
   await expect(page.locator('.battle-status')).toContainText('ENEMY')
   const state = await getState(page)
@@ -37,22 +49,28 @@ test('spending both quick actions hands the turn to the enemy team', async ({ pa
 test('closing to weapon range and attacking damages the target and builds heat on the attacker', async ({
   page,
 }) => {
-  await clickCell(page, 1, 3)
-  await clickCell(page, 2, 1)
+  // One free move is enough to bring Sentinel within weapon range — no need to wait out a whole
+  // round (and no need to linger in its guaranteed-hit Smart Rifle range for several idle turns).
+  await clickCell(page, 2, 3)
 
-  const state = await passUntil(page, (s, status) => s.round >= 2 && status.includes('Everest'))
+  const state = await getState(page)
   const everest = findUnit(state, 'player-1')
   const enemies = state.units.filter((u) => u.team === 'enemy' && u.structure > 0)
   const nearest = enemies.reduce((a, b) =>
-    manhattan(everest.pos, a.pos) < manhattan(everest.pos, b.pos) ? a : b
+    chebyshevDistance(everest.pos, a.pos) < chebyshevDistance(everest.pos, b.pos) ? a : b
   )
-  expect(manhattan(everest.pos, nearest.pos)).toBeLessThanOrEqual(4)
+  expect(chebyshevDistance(everest.pos, nearest.pos)).toBeLessThanOrEqual(4)
 
   const hpBefore = nearest.hp
-  await page.click('button:has-text("Attack")')
-  await clickCell(page, nearest.pos.x, nearest.pos.y)
+  // Sentinel is quite evasive (10) — attack with both quick actions if the first roll misses,
+  // rather than asserting on a single roll's luck.
+  let after = state
+  for (let i = 0; i < 2 && findUnit(after, nearest.id).hp >= hpBefore; i++) {
+    await page.click('button:has-text("Attack")')
+    await clickCell(page, nearest.pos.x, nearest.pos.y)
+    after = await getState(page)
+  }
 
-  const after = await getState(page)
   expect(findUnit(after, nearest.id).hp).toBeLessThan(hpBefore)
   expect(findUnit(after, 'player-1').heat).toBeGreaterThan(0)
 })
