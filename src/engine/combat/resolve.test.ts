@@ -641,7 +641,7 @@ describe('resolve', () => {
 
     const watcher = unit(after, 'player-1')
     expect(watcher.systemReactionArmed).toBe(false)
-    expect(watcher.statuses).toEqual([{ type: 'extendedRange', roundsRemaining: 1 }])
+    expect(watcher.statuses).toEqual([{ type: 'extendedRange', roundsRemaining: 2 }])
     // No attack rolled — evasion 21 would otherwise guarantee a miss and heat build from Overwatch.
     expect(watcher.heat).toBe(0)
   })
@@ -661,7 +661,7 @@ describe('resolve', () => {
     const mover = unit(after, 'enemy-1')
     expect(watcher.overwatch).toBe(false)
     expect(watcher.systemReactionArmed).toBe(false)
-    expect(watcher.statuses).toEqual([{ type: 'extendedRange', roundsRemaining: 1 }])
+    expect(watcher.statuses).toEqual([{ type: 'extendedRange', roundsRemaining: 2 }])
     expect(mover.hp).toBeLessThan(mover.maxHp) // Overwatch's reaction attack still landed
   })
 

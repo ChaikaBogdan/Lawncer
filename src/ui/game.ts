@@ -324,7 +324,7 @@ export function mountGame(root: HTMLElement, initialState: GameState): void {
 
     const isPlayerTurn = !!activeUnit && activeUnit.team === 'player' && !isAnimating
     const reactionLocked = !!activeUnit && hasStatus(activeUnit, 'braced')
-    attackButton.disabled = !isPlayerTurn || attackable.length === 0
+    attackButton.disabled = !isPlayerTurn || attackable.length === 0 || !!activeUnit?.weaponDisabled
     overwatchButton.disabled =
       !isPlayerTurn || !!activeUnit?.overwatch || !!activeUnit?.brace || reactionLocked
     systemReactionButton.disabled =

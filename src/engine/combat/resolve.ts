@@ -206,7 +206,10 @@ function applySystemReactionIfTriggered(
   const buffed = withStatus(
     { ...watcher, systemReactionArmed: false },
     watcher.systemReactionStatus,
-    1
+    // 2, not 1: decayStatuses only runs once per round rollover (not per activation), so a
+    // duration of 1 would expire at the end of *this* round, before the watcher's own next
+    // activation (next round) ever gets to use the buff.
+    2
   )
   return { ...state, units: state.units.map((u) => (u.id === watcher.id ? buffed : u)) }
 }
@@ -232,6 +235,16 @@ function applyOverwatchReactions(state: GameState, moverId: string, fromPos: Pos
     if (!watcher.overwatch || !reactionTriggered(withSystemReaction, watcher, mover, fromPos)) {
       return withSystemReaction
     }
+
+    // DEBUG (temporary): confirm whether Overwatch reaction attacks resolve against a mover's
+    // post-move position at a distance beyond the watcher's weapon threat/range.
+    console.log('[overwatch reaction attack]', {
+      watcherId: watcher.id,
+      weaponThreat: watcher.weapon.threat,
+      weaponRange: watcher.weapon.range,
+      fromPosDistance: chebyshevDistance(watcher.pos, fromPos),
+      finalDistance: chebyshevDistance(watcher.pos, mover.pos),
+    })
 
     const { state: afterRoll, result } = rollAttack(withSystemReaction, watcher, mover)
     const { unit: watcherAfterHeat, state: afterWatcherHeat } = heatAndRollStressTable(

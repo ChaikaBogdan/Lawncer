@@ -480,6 +480,10 @@ body {
   background: var(--status-good);
 }
 
+.badge.weaponDisabled {
+  background: var(--status-critical);
+}
+
 /* --- Combat log --- */
 
 .combat-log {

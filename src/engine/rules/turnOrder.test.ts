@@ -132,4 +132,20 @@ describe('turn order', () => {
     // refill it, or Wraith's Boost (and every other frame's System Reaction) could be spammed.
     expect(p1.systemReactionUses).toBe(1)
   })
+
+  it('a status granted mid-round with roundsRemaining 2 survives round rollover so it is still active for its next activation', () => {
+    let state = baseState([
+      { ...unit('p1', 'player'), statuses: [{ type: 'extendedRange', roundsRemaining: 2 }] },
+      unit('e1', 'enemy'),
+    ])
+    state = {
+      ...state,
+      units: state.units.map((u) => ({ ...u, hasActivated: true })),
+    }
+
+    state = advanceTurn(state)
+
+    const p1 = state.units.find((u) => u.id === 'p1')!
+    expect(p1.statuses).toEqual([{ type: 'extendedRange', roundsRemaining: 1 }])
+  })
 })

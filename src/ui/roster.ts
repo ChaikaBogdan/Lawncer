@@ -92,6 +92,7 @@ function unitCard(state: GameState, unit: UnitState, isActive: boolean): string 
     ...unit.statuses.map((s) => `<span class="badge ${s.type}">${s.type}</span>`),
     ...(unit.overwatch ? ['<span class="badge overwatch">overwatch</span>'] : []),
     ...(unit.brace ? ['<span class="badge brace">bracing</span>'] : []),
+    ...(unit.weaponDisabled ? ['<span class="badge weaponDisabled">weapon disabled</span>'] : []),
     ...(isAlive(unit) && isEngaged(state, unit)
       ? ['<span class="badge engaged">engaged</span>']
       : []),
